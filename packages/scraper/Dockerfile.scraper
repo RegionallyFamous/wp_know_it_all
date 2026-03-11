@@ -27,6 +27,9 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
+# Ensure pnpm exists if Railway start command is overridden to pnpm
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
+
 # git is required for simple-git (GitHub clone)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates \

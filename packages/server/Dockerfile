@@ -43,6 +43,9 @@ ENV NODE_ENV=production
 
 WORKDIR /app
 
+# Ensure pnpm exists if Railway start command is overridden to pnpm
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
+
 # Non-root user
 RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 --ingroup nodejs nodejs
