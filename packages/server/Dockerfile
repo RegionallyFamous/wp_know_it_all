@@ -1,21 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# ── Stage 1: Install production dependencies ──────────────────────────────────
-FROM node:22-slim AS deps
-WORKDIR /app
-
-# Enable corepack for pnpm
-RUN corepack enable
-
-# Copy workspace files needed for install
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/server/package.json ./packages/server/
-
-# Install only server runtime deps (+ transitive workspace deps like shared)
-RUN pnpm install --frozen-lockfile --prod --filter @wp-know-it-all/server...
-
-# ── Stage 2: Build TypeScript ─────────────────────────────────────────────────
+# ── Stage 1: Build and create deployable server bundle ────────────────────────
 FROM node:22-slim AS build
 WORKDIR /app
 
@@ -36,7 +21,11 @@ COPY packages/server/ ./packages/server/
 RUN pnpm --filter @wp-know-it-all/shared build
 RUN pnpm --filter @wp-know-it-all/server build
 
-# ── Stage 3: Production image ─────────────────────────────────────────────────
+# Produce a portable server folder with isolated production node_modules.
+# --legacy avoids requiring inject-workspace-packages in pnpm-workspace.yaml.
+RUN pnpm --filter @wp-know-it-all/server --prod deploy --legacy /prod/server
+
+# ── Stage 2: Production image ─────────────────────────────────────────────────
 FROM node:22-slim AS production
 
 ENV NODE_ENV=production
@@ -49,13 +38,8 @@ WORKDIR /app
 RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 --ingroup nodejs nodejs
 
-# Copy built artifacts
-COPY --from=deps  --chown=nodejs:nodejs /app/node_modules                    ./node_modules
-COPY --from=build --chown=nodejs:nodejs /app/packages/shared/dist            ./packages/shared/dist
-COPY --from=build --chown=nodejs:nodejs /app/packages/server/dist            ./packages/server/dist
-COPY --chown=nodejs:nodejs package.json pnpm-workspace.yaml                  ./
-COPY --chown=nodejs:nodejs packages/shared/package.json                      ./packages/shared/
-COPY --chown=nodejs:nodejs packages/server/package.json                      ./packages/server/
+# Copy deploy bundle to expected service path used by Railway start command
+COPY --from=build --chown=nodejs:nodejs /prod/server ./packages/server
 
 # Default local data dir; Railway provides mount path via RAILWAY_VOLUME_MOUNT_PATH
 RUN mkdir -p /app/data /tmp/.cache/node/corepack/v1 \
