@@ -102,6 +102,28 @@ const app = createMcpExpressApp({
 let inFlightRequests = 0;
 let isShuttingDown = false;
 
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getClientIp(req: Request): string {
+  const forwardedFor = req.get("x-forwarded-for");
+  const firstForwardedIp = forwardedFor
+    ?.split(",")[0]
+    ?.trim()
+    .replace(/^"|"$/g, "")
+    .replace(/^::ffff:/i, "");
+  if (firstForwardedIp) return firstForwardedIp;
+
+  const forwarded = req.get("x-real-ip")?.trim().replace(/^::ffff:/i, "");
+  if (forwarded) return forwarded;
+
+  return (req.ip || req.socket.remoteAddress || "unknown").replace(/^::ffff:/i, "");
+}
+
 function createRateLimiter(
   keyPrefix: string,
   windowMs: number,
@@ -109,7 +131,7 @@ function createRateLimiter(
 ): RequestHandler {
   const hits = new Map<string, { count: number; resetAt: number }>();
   return (req, res, next) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const ip = getClientIp(req);
     const key = `${keyPrefix}:${ip}`;
     const now = Date.now();
     const existing = hits.get(key);
@@ -131,6 +153,12 @@ function createRateLimiter(
     next();
   };
 }
+
+const rateLimitEnabled = process.env["RATE_LIMIT_ENABLED"] !== "0";
+const adminLoginWindowMs = parsePositiveIntEnv("RATE_LIMIT_ADMIN_LOGIN_WINDOW_MS", 60_000);
+const adminLoginMax = parsePositiveIntEnv("RATE_LIMIT_ADMIN_LOGIN_MAX", 20);
+const mcpWindowMs = parsePositiveIntEnv("RATE_LIMIT_MCP_WINDOW_MS", 60_000);
+const mcpMax = parsePositiveIntEnv("RATE_LIMIT_MCP_MAX", 300);
 
 app.use((_req, res, next) => {
   if (isShuttingDown) {
@@ -168,8 +196,10 @@ app.use((_req, res, next) => {
 
 // Parse URL-encoded bodies for admin login form
 app.use(express.urlencoded({ extended: false }));
-app.use("/admin/login", createRateLimiter("admin-login", 60_000, 8));
-app.use("/mcp", createRateLimiter("mcp", 60_000, 120));
+if (rateLimitEnabled) {
+  app.use("/admin/login", createRateLimiter("admin-login", adminLoginWindowMs, adminLoginMax));
+  app.use("/mcp", createRateLimiter("mcp", mcpWindowMs, mcpMax));
+}
 
 const authMiddleware = mcpToken ? createAuthMiddleware(mcpToken) : null;
 
@@ -270,6 +300,13 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
   console.log(`[server] Readiness: http://0.0.0.0:${PORT}/readyz`);
   console.log(`[server] Startup: http://0.0.0.0:${PORT}/startupz`);
   console.log(`[server] Health check: http://0.0.0.0:${PORT}/health`);
+  if (rateLimitEnabled) {
+    console.log(
+      `[server] Rate limits: admin-login=${adminLoginMax}/${Math.round(adminLoginWindowMs / 1000)}s, mcp=${mcpMax}/${Math.round(mcpWindowMs / 1000)}s`
+    );
+  } else {
+    console.log("[server] Rate limits: DISABLED (RATE_LIMIT_ENABLED=0)");
+  }
   if (allowedHosts.length > 0) {
     console.log(`[server] Allowed hosts: ${allowedHosts.join(", ")}`);
   } else {
