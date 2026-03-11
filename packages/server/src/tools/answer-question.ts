@@ -164,6 +164,53 @@ function evidenceKeywordCoverage(question: string, evidence: SearchResult[]): nu
   return matched / tokens.length;
 }
 
+function evidenceAgreementScore(evidence: SearchResult[]): number {
+  if (evidence.length <= 1) return 1;
+  const top = evidence.slice(0, Math.min(4, evidence.length));
+  const tokenSets = top.map((item) =>
+    new Set(
+      `${item.title} ${item.excerpt}`
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((token) => token.length > 4)
+    )
+  );
+  let overlapSum = 0;
+  let pairs = 0;
+  for (let i = 0; i < tokenSets.length; i++) {
+    for (let j = i + 1; j < tokenSets.length; j++) {
+      const a = tokenSets[i]!;
+      const b = tokenSets[j]!;
+      const intersection = [...a].filter((token) => b.has(token)).length;
+      const union = new Set([...a, ...b]).size;
+      overlapSum += union === 0 ? 0 : intersection / union;
+      pairs += 1;
+    }
+  }
+  if (pairs === 0) return 1;
+  return overlapSum / pairs;
+}
+
+function detectEvidenceConflictSignals(evidence: SearchResult[]): string[] {
+  const text = evidence
+    .slice(0, 6)
+    .map((item) => `${item.title} ${item.excerpt}`.toLowerCase())
+    .join("\n");
+  const signals: string[] = [];
+  const hasDeprecated = /\bdeprecated\b/.test(text);
+  const hasRecommended = /\brecommended\b|\bbest practice\b/.test(text);
+  if (hasDeprecated && hasRecommended) {
+    signals.push("Evidence includes both deprecated and recommended guidance; verify version-specific applicability.");
+  }
+  const hasSync = /\bsynchronous\b|\bsync\b/.test(text);
+  const hasAsync = /\basynchronous\b|\basync\b/.test(text);
+  if (hasSync && hasAsync) {
+    signals.push("Evidence spans sync and async approaches; choose based on runtime constraints.");
+  }
+  return signals;
+}
+
 function selectClaimEvidence(question: string, evidence: SearchResult[], limit: number): SearchResult[] {
   const tokens = tokenizeQuestion(question);
   if (tokens.length === 0) return evidence.slice(0, limit);
@@ -259,8 +306,9 @@ function calibratePreVerificationConfidence(
   const intentBoost = routeIntent === "exact_symbol" ? 0.1 : 0;
   const assumptionPenalty = assumptions.length > 1 ? 0.08 : 0;
   const evidenceBoost = Math.min(0.2, evidence.length * 0.03);
+  const agreementBoost = evidenceAgreementScore(evidence) * 0.08;
   const raw = 0.5 + intentBoost + evidenceBoost - diversityPenalty - assumptionPenalty;
-  return Math.max(0.1, Math.min(0.95, raw));
+  return Math.max(0.1, Math.min(0.95, raw + agreementBoost));
 }
 
 function buildAbstainedAnswer(question: string, reason: string): GroundedAnswer {
@@ -285,10 +333,14 @@ function buildDeterministicAnswer(
   decompositionQueries: string[]
 ): GroundedAnswer {
   const evidenceById = buildEvidenceMap(evidence);
-  const assumptions = inferAssumptions(question, evidence);
+  const assumptions = [
+    ...inferAssumptions(question, evidence),
+    ...detectEvidenceConflictSignals(evidence),
+  ];
   const reasoningSteps = formatReasoningSteps(routeIntent, evidence.length, decompositionQueries);
 
-  const claimEvidence = selectClaimEvidence(question, evidence, Math.min(3, evidence.length));
+  const claimLimit = routeIntent === "workflow" ? 2 : 1;
+  const claimEvidence = selectClaimEvidence(question, evidence, Math.min(claimLimit, evidence.length));
   const claims = claimEvidence.map((item) => ({
     text: `${item.title}: ${item.excerpt || "Relevant documentation found for this question."}`,
     citationDocIds: [item.id],
@@ -332,7 +384,7 @@ export async function buildGroundedAnswer(
   synthesisEngine: "deterministic" | "ollama";
   criticUsed: boolean;
   criticAccepted: boolean;
-  routeIntent: "exact_symbol" | "conceptual";
+  routeIntent: "exact_symbol" | "workflow" | "conceptual";
   retrievalLatencyMs: number;
   rerankLatencyMs: number;
   answerLatencyMs: number;
@@ -356,7 +408,7 @@ export async function buildGroundedAnswer(
   pushCandidates(baseResults, "bm25");
 
   const decompositionQueries =
-    route.intent === "conceptual" ? decomposeConceptualQuery(route.normalizedQuery) : [];
+    route.intent === "exact_symbol" ? [] : decomposeConceptualQuery(route.normalizedQuery);
   for (const expanded of decompositionQueries) {
     const decomposedResults = queries.search({
       query: expanded,
@@ -417,7 +469,7 @@ export async function buildGroundedAnswer(
       answerLatencyMs: Date.now() - answerStart,
     };
   }
-  if (route.intent === "conceptual") {
+  if (route.intent !== "exact_symbol") {
     const keywordCoverage = evidenceKeywordCoverage(params.question, evidence);
     if (keywordCoverage < 0.25) {
       return {
@@ -485,11 +537,12 @@ export async function buildGroundedAnswer(
             ? 0.72
             : 0.5,
       }));
-      const filteredCitations = pickCitationsForClaims(parsedClaims, evidenceById);
+      const trimmedClaims = parsedClaims.slice(0, route.intent === "workflow" ? 2 : 1);
+      const filteredCitations = pickCitationsForClaims(trimmedClaims, evidenceById);
       answer = GroundedAnswerSchema.parse({
         question: params.question,
         answer: ollamaSynth.answer,
-        claims: parsedClaims,
+        claims: trimmedClaims,
         citations: filteredCitations.length > 0 ? filteredCitations : citations,
         reasoningSteps: formatReasoningSteps(route.intent, evidence.length, decompositionQueries),
         assumptions: inferAssumptions(params.question, evidence),
@@ -579,6 +632,11 @@ export function formatGroundedAnswerOutput(
     "## Assumptions",
     assumptionLines,
     "",
+    "## Implementation Guardrails",
+    "- Fetch full source docs with `get_wordpress_doc` before coding production changes.",
+    "- Run `validate_wordpress_code` on final PHP snippets to catch security and standards issues.",
+    "- If assumptions or conflicts are listed, resolve them explicitly before implementation.",
+    "",
     "## Claims",
     claimLines,
     "",
@@ -617,10 +675,11 @@ export function registerAnswerQuestionTool(
             0.15,
             Math.min(
               0.98,
-              0.35 +
+            0.32 +
                 verification.averageSupportScore * 0.35 +
                 verification.citationCoverage * 0.2 +
                 (1 - verification.unsupportedClaimRate) * 0.1 +
+                evidenceAgreementScore(result.evidence) * 0.08 +
                 (result.routeIntent === "exact_symbol" ? 0.05 : 0)
             )
           );

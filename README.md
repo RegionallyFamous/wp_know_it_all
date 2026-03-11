@@ -112,6 +112,10 @@ Set these environment variables in the Railway dashboard:
 | `OLLAMA_CRITIC_MODEL` (optional) | Ollama model for answer critique pass (default `OLLAMA_ANSWER_MODEL`) |
 | `OLLAMA_ANSWER_TIMEOUT_MS` (optional) | Ollama answer synthesis timeout in ms (default `1800`) |
 | `OLLAMA_CRITIC_TIMEOUT_MS` (optional) | Ollama critique timeout in ms (default `1200`) |
+| `IETF_RFC_BUNDLE` (optional) | RFC bundle scope: `core` (default) or `expanded` |
+| `PYTHON_DOCS_BUNDLE` (optional) | Python docs bundle scope: `core` (default) or `expanded` |
+| `NODE_DOCS_BUNDLE` (optional) | Node docs bundle scope: `core` (default) or `expanded` |
+| `MDN_DOCS_BUNDLE` (optional) | MDN docs bundle scope: `core` (default) or `expanded` |
 
 ### 3. Attach a persistent volume
 
@@ -229,14 +233,24 @@ Run local quality gate:
 
 ```bash
 pnpm eval:quality
+pnpm eval:canary
+pnpm eval:baseline
+pnpm eval:ops
 ```
 
 Current thresholds enforced by the evaluator:
 
-- hit@k >= 0.80
-- citation precision >= 0.60
-- unsupported claim rate <= 0.20
-- abstain accuracy >= 1.00
+- default profile: hit@k >= 0.90, citation precision >= 0.62, unsupported claim rate <= 0.12, support score >= 0.62, abstain accuracy >= 0.75
+- canary profile: hit@k >= 0.95, citation precision >= 0.62, unsupported claim rate <= 0.08, support score >= 0.72, abstain accuracy >= 0.75
+
+### Recommended tool workflow for best answers
+
+Use this sequence for high-confidence development guidance:
+
+1. `search_wordpress_docs` to discover candidate sources.
+2. `get_wordpress_doc` on top hits for full context.
+3. `answer_wordpress_question` for grounded synthesis with citations.
+4. `validate_wordpress_code` on final PHP snippets before shipping.
 
 ### Wrangler persona policy
 

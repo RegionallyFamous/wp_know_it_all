@@ -12,6 +12,8 @@
     "test": "turbo run test",
     "eval:quality": "pnpm --filter @wp-know-it-all/server eval:quality",
     "eval:canary": "pnpm --filter @wp-know-it-all/server eval:canary",
+    "eval:baseline": "pnpm --filter @wp-know-it-all/server eval:baseline",
+    "eval:ops": "pnpm --filter @wp-know-it-all/server eval:ops",
     "format": "prettier --write \"packages/**/src/**/*.ts\"",
     "ci": "pnpm run build && pnpm run typecheck && pnpm run lint:strict && pnpm run test && pnpm run eval:quality && pnpm run eval:canary",
     "backup:db": "./scripts/backup-db.sh",

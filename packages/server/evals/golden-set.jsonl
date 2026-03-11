@@ -8,6 +8,11 @@
 {"question":"Which RFC defines modern HTTP semantics?","expectedSlugs":["ietf-rfc-rfc-9110-http-semantics"],"shouldAbstain":false}
 {"question":"In Python, what module parses URLs?","expectedSlugs":["python-library-urllib-parse"],"shouldAbstain":false}
 {"question":"How do I parse URLs in Python for a WP migration tool?","expectedSlugs":["python-library-urllib-parse"],"shouldAbstain":false}
+{"question":"Which Node.js module is used for filesystem operations?","expectedSlugs":["nodejs-fs"],"shouldAbstain":false}
+{"question":"How does the Fetch API perform HTTP requests in browsers?","expectedSlugs":["mdn-web-api-fetch-api"],"shouldAbstain":false}
+{"question":"In PHP, which function finds substring position in a string?","expectedSlugs":["php-function-strpos"],"shouldAbstain":false}
 {"question":"What's the best way to do quantum database teleport in WordPress core?","expectedSlugs":[],"shouldAbstain":true}
 {"question":"Does WordPress have a function called register_quantum_post_type?","expectedSlugs":[],"shouldAbstain":true}
 {"question":"What does quantum_flargle_wp_do_magic do?","expectedSlugs":[],"shouldAbstain":true}
+{"question":"Should I always disable nonce checks for better performance in WordPress?","expectedSlugs":[],"shouldAbstain":true}
+{"question":"Is there an official WordPress API called wp_make_teleport_request?","expectedSlugs":[],"shouldAbstain":true}

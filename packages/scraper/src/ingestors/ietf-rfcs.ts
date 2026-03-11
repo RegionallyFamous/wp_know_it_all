@@ -32,11 +32,16 @@ function rfcNumberFromUrl(url: string): string {
 }
 
 export async function ingestIetfRfcs(): Promise<InsertableDocument[]> {
+  const bundleMode = process.env["IETF_RFC_BUNDLE"] === "expanded" ? "expanded" : "core";
+  const urls =
+    bundleMode === "expanded"
+      ? [...IETF_RFCS_MANIFEST.coreUrls, ...IETF_RFCS_MANIFEST.expandedUrls]
+      : [...IETF_RFCS_MANIFEST.coreUrls];
   const documents: InsertableDocument[] = [];
   const seenUrls = new Set<string>();
   const seenSlugs = new Set<string>();
 
-  for (const url of IETF_RFCS_MANIFEST.urls) {
+  for (const url of urls) {
     try {
       const response = await fetch(url, {
         headers: {
@@ -75,6 +80,7 @@ export async function ingestIetfRfcs(): Promise<InsertableDocument[]> {
         metadata: {
           ecosystem: "standards",
           section: "ietf-rfc",
+          bundle: bundleMode,
           rfc_number: rfcNumber,
         },
       };
@@ -87,6 +93,6 @@ export async function ingestIetfRfcs(): Promise<InsertableDocument[]> {
     }
   }
 
-  console.log(`[ietf] ${documents.length} docs processed`);
+  console.log(`[ietf] ${documents.length} docs processed (bundle=${bundleMode})`);
   return documents;
 }

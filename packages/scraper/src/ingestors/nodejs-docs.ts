@@ -23,12 +23,22 @@ function isExcludedApiFile(path: string): boolean {
   );
 }
 
+function selectNodeAllowlist(): Set<string> {
+  const bundleMode = process.env["NODE_DOCS_BUNDLE"] === "expanded" ? "expanded" : "core";
+  const list =
+    bundleMode === "expanded"
+      ? [...NODEJS_DOCS_MANIFEST.coreAllowlist, ...NODEJS_DOCS_MANIFEST.expandedAllowlist]
+      : [...NODEJS_DOCS_MANIFEST.coreAllowlist];
+  return new Set(list.map((file) => file.toLowerCase()));
+}
+
 function nodeApiUrlFromRelPath(relPath: string): string {
   const slug = relPath.replace(/\\/g, "/").replace(/\.md$/i, "");
   return `${NODEJS_DOCS_MANIFEST.baseUrl}/${slug}.html`;
 }
 
 export async function ingestNodejsDocs(cloneDir?: string): Promise<InsertableDocument[]> {
+  const bundleMode = process.env["NODE_DOCS_BUNDLE"] === "expanded" ? "expanded" : "core";
   const repoDir = cloneDir ?? join(tmpdir(), "nodejs-docs-repo");
   await ensureSparseRepo({
     repoDir,
@@ -48,10 +58,12 @@ export async function ingestNodejsDocs(cloneDir?: string): Promise<InsertableDoc
   const seenUrls = new Set<string>();
   const seenSlugs = new Set<string>();
   const exts = new Set([".md"]);
+  const allowlist = selectNodeAllowlist();
 
   for (const filePath of walkFiles(docsRoot, exts)) {
     const relPath = relative(docsRoot, filePath).replace(/\\/g, "/");
     if (isExcludedApiFile(relPath)) continue;
+    if (!allowlist.has(relPath.toLowerCase())) continue;
 
     const raw = readFileSync(filePath, "utf-8");
     if (!raw.trim()) continue;
@@ -83,6 +95,7 @@ export async function ingestNodejsDocs(cloneDir?: string): Promise<InsertableDoc
       metadata: {
         ecosystem: "nodejs",
         section: "api",
+        bundle: bundleMode,
         repo: NODEJS_DOCS_MANIFEST.repoUrl,
       },
     };
@@ -92,6 +105,6 @@ export async function ingestNodejsDocs(cloneDir?: string): Promise<InsertableDoc
     }
   }
 
-  console.log(`[nodejs] ${documents.length} docs processed`);
+  console.log(`[nodejs] ${documents.length} docs processed (bundle=${bundleMode})`);
   return documents;
 }

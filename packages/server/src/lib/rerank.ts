@@ -71,6 +71,10 @@ export function rerankCandidates(
     if (intent === "exact_symbol" && (result.doc_type === "function" || result.doc_type === "hook")) {
       score += 10;
     }
+    if (intent === "workflow") {
+      if (result.doc_type === "guide" || result.doc_type === "example") score += 12;
+      if (result.category === "coding-standards" || result.category === "common-apis") score += 8;
+    }
 
     return { result, score };
   });

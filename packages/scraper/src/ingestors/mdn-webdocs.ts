@@ -35,12 +35,17 @@ function sectionFromRelPath(relPathFromEnUs: string): string {
 }
 
 export async function ingestMdnWebDocs(cloneDir?: string): Promise<InsertableDocument[]> {
+  const bundleMode = process.env["MDN_DOCS_BUNDLE"] === "expanded" ? "expanded" : "core";
+  const sparsePaths =
+    bundleMode === "expanded"
+      ? [...MDN_DOCS_MANIFEST.coreSparsePaths, ...MDN_DOCS_MANIFEST.expandedSparsePaths]
+      : [...MDN_DOCS_MANIFEST.coreSparsePaths];
   const repoDir = cloneDir ?? join(tmpdir(), "mdn-content-repo");
   await ensureSparseRepo({
     repoDir,
     repoUrl: MDN_DOCS_MANIFEST.repoUrl,
     branch: MDN_DOCS_MANIFEST.branch,
-    sparsePaths: [...MDN_DOCS_MANIFEST.sparsePaths],
+    sparsePaths,
     label: "mdn",
   });
 
@@ -91,6 +96,7 @@ export async function ingestMdnWebDocs(cloneDir?: string): Promise<InsertableDoc
       metadata: {
         ecosystem: "web",
         section: sectionFromRelPath(relPath),
+        bundle: bundleMode,
         repo: MDN_DOCS_MANIFEST.repoUrl,
       },
     };
@@ -100,6 +106,6 @@ export async function ingestMdnWebDocs(cloneDir?: string): Promise<InsertableDoc
     }
   }
 
-  console.log(`[mdn] ${documents.length} docs processed`);
+  console.log(`[mdn] ${documents.length} docs processed (bundle=${bundleMode})`);
   return documents;
 }

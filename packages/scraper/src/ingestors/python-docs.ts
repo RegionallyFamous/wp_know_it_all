@@ -22,6 +22,13 @@ const PYTHON_ALLOWLIST = new Set<string>([
   "reference/expressions.rst",
   "reference/simple_stmts.rst",
 ]);
+const PYTHON_EXPANDED_ALLOWLIST = new Set<string>([
+  "library/subprocess.rst",
+  "library/os.rst",
+  "library/re.rst",
+  "library/sqlite3.rst",
+  "library/concurrent.futures.rst",
+]);
 const PYTHON_MAX_FILE_BYTES = 500_000;
 
 function rstToMarkdown(rst: string): string {
@@ -60,6 +67,11 @@ function sectionFromPath(relPathFromDocRoot: string): string {
 }
 
 export async function ingestPythonDocs(cloneDir?: string): Promise<InsertableDocument[]> {
+  const bundleMode = process.env["PYTHON_DOCS_BUNDLE"] === "expanded" ? "expanded" : "core";
+  const allowlist =
+    bundleMode === "expanded"
+      ? new Set<string>([...PYTHON_ALLOWLIST, ...PYTHON_EXPANDED_ALLOWLIST])
+      : PYTHON_ALLOWLIST;
   const repoDir = cloneDir ?? join(tmpdir(), "python-docs-repo");
   await ensureSparseRepo({
     repoDir,
@@ -78,7 +90,7 @@ export async function ingestPythonDocs(cloneDir?: string): Promise<InsertableDoc
   const documents: InsertableDocument[] = [];
   const seenUrls = new Set<string>();
   const seenSlugs = new Set<string>();
-  for (const relPath of PYTHON_ALLOWLIST) {
+  for (const relPath of allowlist) {
     const filePath = join(docsRoot, relPath);
     if (!existsSync(filePath)) continue;
     const rst = readFileSync(filePath, "utf-8");
@@ -114,6 +126,7 @@ export async function ingestPythonDocs(cloneDir?: string): Promise<InsertableDoc
         section: sectionFromPath(relPath),
         repo: PYTHON_DOCS_MANIFEST.repoUrl,
         branch: PYTHON_DOCS_MANIFEST.branch,
+        bundle: bundleMode,
         path: relPath,
       },
     };
@@ -123,6 +136,6 @@ export async function ingestPythonDocs(cloneDir?: string): Promise<InsertableDoc
     }
   }
 
-  console.log(`[python] ${documents.length} docs processed`);
+  console.log(`[python] ${documents.length} docs processed (bundle=${bundleMode})`);
   return documents;
 }

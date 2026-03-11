@@ -39,6 +39,29 @@ function claimSupportScore(claimText: string, content: string): number {
   return matches / claimTokens.length;
 }
 
+function contradictionSignalScore(claimText: string, content: string): number {
+  const claim = normalizeForMatch(claimText);
+  const doc = normalizeForMatch(content);
+  if (!claim || !doc) return 0;
+  const conflictPairs: Array<[string, string]> = [
+    ["must", "must not"],
+    ["always", "never"],
+    ["recommended", "deprecated"],
+    ["required", "optional"],
+  ];
+  let conflicts = 0;
+  for (const [left, right] of conflictPairs) {
+    const claimHasLeft = claim.includes(left);
+    const claimHasRight = claim.includes(right);
+    const docHasLeft = doc.includes(left);
+    const docHasRight = doc.includes(right);
+    if ((claimHasLeft && docHasRight) || (claimHasRight && docHasLeft)) {
+      conflicts += 1;
+    }
+  }
+  return Math.min(1, conflicts / conflictPairs.length);
+}
+
 export function verifyGroundedAnswer(
   answer: GroundedAnswer,
   queries: ReturnType<typeof buildQueries>
@@ -65,6 +88,7 @@ export function verifyGroundedAnswer(
 
     let supported = false;
     let bestScore = 0;
+    let bestContradiction = 0;
     for (const docId of claim.citationDocIds) {
       if (!citationIds.has(docId)) {
         reasons.push(`Claim references doc ${docId} that is not in citation list.`);
@@ -88,6 +112,11 @@ export function verifyGroundedAnswer(
       const scoreFromDoc = claimSupportScore(claim.text, content);
       const scoreFromSnippet = snippet ? claimSupportScore(claim.text, snippet) : 0;
       bestScore = Math.max(bestScore, scoreFromDoc, scoreFromSnippet);
+      bestContradiction = Math.max(
+        bestContradiction,
+        contradictionSignalScore(claim.text, content),
+        snippet ? contradictionSignalScore(claim.text, snippet) : 0
+      );
 
       if (claimSupportedByDoc(claim.text, content) || (snippet && claimSupportedByDoc(claim.text, snippet))) {
         supported = true;
@@ -100,6 +129,8 @@ export function verifyGroundedAnswer(
     if (!supported) {
       unsupportedClaims += 1;
       reasons.push(`Claim appears unsupported by cited docs: "${claim.text}"`);
+    } else if (bestContradiction >= 0.5) {
+      reasons.push(`Claim may conflict with cited evidence wording: "${claim.text}"`);
     }
   }
 
