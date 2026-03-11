@@ -97,6 +97,7 @@ Set these environment variables in the Railway dashboard:
 | Variable | Value |
 |---|---|
 | `MCP_AUTH_TOKEN` | A strong random secret (e.g. `openssl rand -hex 32`) |
+| `SCRAPER_ENTRY` (optional) | Absolute path to scraper entrypoint. Default auto-resolves to `/app/packages/scraper/dist/index.js` |
 
 ### 3. Attach a persistent volume
 
@@ -124,6 +125,16 @@ railway domain
 ```
 
 Use the generated URL in your MCP client config above.
+
+### Troubleshooting admin-triggered scraper runs
+
+If `/admin/scraper` shows `Cannot find module '/packages/scraper/dist/index.js'`, set:
+
+```env
+SCRAPER_ENTRY=/app/packages/scraper/dist/index.js
+```
+
+The server now checks common paths automatically and logs checked candidates in `scraper.log` if the entrypoint is missing.
 
 ---
 

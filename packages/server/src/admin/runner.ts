@@ -34,6 +34,10 @@ export class ScraperRunner {
     return this.#lines.slice(-n);
   }
 
+  addSystemMessage(text: string): void {
+    this.#push("system", text);
+  }
+
   #push(stream: LogLine["stream"], text: string): void {
     if (this.#lines.length >= MAX_LINES) {
       this.#lines.shift();

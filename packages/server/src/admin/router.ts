@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import cookieParser from "cookie-parser";
 import type Database from "better-sqlite3";
 import {
@@ -24,8 +25,52 @@ import {
 } from "./templates.js";
 import type { Request, Response } from "express";
 
-const MONOREPO_ROOT = fileURLToPath(new URL("../../../../..", import.meta.url));
-const SCRAPER_ENTRY = join(MONOREPO_ROOT, "packages/scraper/dist/index.js");
+function resolveScraperEntrypoint(): {
+  entrypoint: string;
+  source: string;
+  checkedPaths: string[];
+} {
+  const checkedPaths: string[] = [];
+  const addPath = (path: string): void => {
+    if (!checkedPaths.includes(path)) checkedPaths.push(path);
+  };
+
+  const override = process.env["SCRAPER_ENTRY"]?.trim();
+  if (override) {
+    const overridePath = resolve(override);
+    addPath(overridePath);
+    if (existsSync(overridePath)) {
+      return { entrypoint: overridePath, source: "SCRAPER_ENTRY", checkedPaths };
+    }
+  }
+
+  // Works for both src/admin/router.ts and dist/admin/router.js layouts.
+  const relativeToServerBundle = fileURLToPath(
+    new URL("../../../scraper/dist/index.js", import.meta.url)
+  );
+  addPath(relativeToServerBundle);
+  if (existsSync(relativeToServerBundle)) {
+    return {
+      entrypoint: relativeToServerBundle,
+      source: "relative-to-server-bundle",
+      checkedPaths,
+    };
+  }
+
+  const cwdWorkspacePath = join(process.cwd(), "packages/scraper/dist/index.js");
+  addPath(cwdWorkspacePath);
+  if (existsSync(cwdWorkspacePath)) {
+    return { entrypoint: cwdWorkspacePath, source: "cwd-workspace", checkedPaths };
+  }
+
+  const dockerDefaultPath = "/app/packages/scraper/dist/index.js";
+  addPath(dockerDefaultPath);
+  return {
+    entrypoint: dockerDefaultPath,
+    source: "docker-default-fallback",
+    checkedPaths,
+  };
+}
 
 function formatTs(ts: number | null | undefined): string {
   if (!ts) return "—";
@@ -529,8 +574,21 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
 
     const ingestTypes = process.env["INGEST_TYPES"];
     const env = ingestTypes ? { INGEST_TYPES: ingestTypes } : undefined;
+    const { entrypoint, source, checkedPaths } = resolveScraperEntrypoint();
 
-    void scraperRunner.run(SCRAPER_ENTRY, env);
+    if (!existsSync(entrypoint)) {
+      const details =
+        `Scraper entrypoint not found at "${entrypoint}". ` +
+        `cwd="${process.cwd()}". Checked: ${checkedPaths.join(", ")}`;
+      scraperRunner.addSystemMessage(details);
+      res.status(500).send(details);
+      return;
+    }
+
+    scraperRunner.addSystemMessage(
+      `Resolved scraper entrypoint: ${entrypoint} (source: ${source})`
+    );
+    void scraperRunner.run(entrypoint, env);
 
     res
       .status(204)

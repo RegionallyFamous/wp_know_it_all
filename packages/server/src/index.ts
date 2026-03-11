@@ -26,15 +26,24 @@ const stats = queries.stats();
 console.log(`[db] Ready — ${stats.total.toLocaleString()} documents indexed`);
 
 // ── Express app ──────────────────────────────────────────────────────────────
-// host: '0.0.0.0' disables localhost-only DNS rebinding protection (required for Railway)
-const app = createMcpExpressApp({ host: "0.0.0.0" });
+const allowedHosts = (process.env["ALLOWED_HOSTS"] ?? "")
+  .split(",")
+  .map((host) => host.trim())
+  .filter((host) => host.length > 0);
+
+// host: '0.0.0.0' is required for Railway; ALLOWED_HOSTS restores host-header protection.
+const app = createMcpExpressApp({
+  host: "0.0.0.0",
+  ...(allowedHosts.length > 0 ? { allowedHosts } : {}),
+});
 
 // Parse URL-encoded bodies for admin login form
 app.use(express.urlencoded({ extended: false }));
 
 // ── Health check (no auth) ───────────────────────────────────────────────────
 app.get("/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok", documents: stats.total });
+  const liveStats = queries.stats();
+  res.json({ status: "ok", documents: liveStats.total });
 });
 
 // ── Admin UI ─────────────────────────────────────────────────────────────────
@@ -99,6 +108,11 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`[server] Admin UI: http://0.0.0.0:${PORT}/admin (${adminStatus})`);
   console.log(`[server] MCP endpoint: http://0.0.0.0:${PORT}/mcp`);
   console.log(`[server] Health check: http://0.0.0.0:${PORT}/health`);
+  if (allowedHosts.length > 0) {
+    console.log(`[server] Allowed hosts: ${allowedHosts.join(", ")}`);
+  } else {
+    console.log("[server] Allowed hosts: not set (use ALLOWED_HOSTS to restrict Host header)");
+  }
   if (process.env["OLLAMA_HOST"]) {
     console.log(`[server] Ollama: ${process.env["OLLAMA_HOST"]} (${process.env["OLLAMA_MODEL"] ?? "qwen2.5-coder:1.5b"})`);
   }
