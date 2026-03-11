@@ -5,6 +5,9 @@ FROM node:22-slim AS build
 WORKDIR /app
 
 RUN corepack enable
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/shared/package.json ./packages/shared/
@@ -24,6 +27,8 @@ RUN pnpm --filter @wp-know-it-all/server build
 # Produce a portable server folder with isolated production node_modules.
 # --legacy avoids requiring inject-workspace-packages in pnpm-workspace.yaml.
 RUN pnpm --filter @wp-know-it-all/server --prod deploy --legacy /prod/server
+# Ensure native binding exists in deploy bundle even if prebuild download misses.
+RUN cd /prod/server && pnpm rebuild better-sqlite3
 
 # ── Stage 2: Production image ─────────────────────────────────────────────────
 FROM node:22-slim AS production
