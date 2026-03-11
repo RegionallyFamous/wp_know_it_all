@@ -49,8 +49,6 @@ RUN addgroup --system --gid 1001 nodejs \
 
 # Copy built artifacts
 COPY --from=deps  --chown=nodejs:nodejs /app/node_modules                    ./node_modules
-COPY --from=deps  --chown=nodejs:nodejs /app/packages/shared/node_modules    ./packages/shared/node_modules
-COPY --from=deps  --chown=nodejs:nodejs /app/packages/server/node_modules    ./packages/server/node_modules
 COPY --from=build --chown=nodejs:nodejs /app/packages/shared/dist            ./packages/shared/dist
 COPY --from=build --chown=nodejs:nodejs /app/packages/server/dist            ./packages/server/dist
 COPY --chown=nodejs:nodejs package.json pnpm-workspace.yaml                  ./

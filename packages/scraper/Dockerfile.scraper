@@ -37,8 +37,6 @@ RUN git config --global credential.helper "" \
  && git config --global core.askpass ""
 
 COPY --from=build /app/node_modules                    ./node_modules
-COPY --from=build /app/packages/shared/node_modules   ./packages/shared/node_modules
-COPY --from=build /app/packages/scraper/node_modules  ./packages/scraper/node_modules
 COPY --from=build /app/packages/shared/dist           ./packages/shared/dist
 COPY --from=build /app/packages/scraper/dist          ./packages/scraper/dist
 COPY package.json pnpm-workspace.yaml                  ./
