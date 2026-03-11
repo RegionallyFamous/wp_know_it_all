@@ -57,9 +57,10 @@ export interface DevHubPage {
   id: number;
   slug: string;
   link: string;
-  title: { rendered: string };
-  content: { rendered: string };
-  parent: number;
+  title?: { rendered?: string };
+  excerpt?: { rendered?: string };
+  content?: { rendered?: string };
+  parent?: number;
   modified: string;
 }
 

@@ -3,6 +3,53 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 export function registerPrompts(server: McpServer): void {
   server.registerPrompt(
+    "answer-with-grounded-citations",
+    {
+      description:
+        "Answer a WordPress question using citation-grounded MCP evidence with abstention on low confidence.",
+      argsSchema: {
+        question: z.string().describe("WordPress question to answer."),
+        category: z
+          .enum([
+            "code-reference",
+            "plugin-handbook",
+            "theme-handbook",
+            "block-editor",
+            "rest-api",
+            "common-apis",
+            "coding-standards",
+            "admin",
+            "scf",
+          ])
+          .optional()
+          .describe("Optional category focus."),
+      },
+    },
+    ({ question, category }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: [
+              `Answer this WordPress question with grounded citations: ${question}`,
+              category ? `Category focus: ${category}` : "",
+              "",
+              "Requirements:",
+              "1. Call answer_wordpress_question first.",
+              "2. If confidence is low or abstained, ask a clarifying question instead of guessing.",
+              "3. Ensure each substantive claim has a citation ID/URL.",
+              "4. For implementation details, fetch full docs with get_wordpress_doc before final advice.",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          },
+        },
+      ],
+    })
+  );
+
+  server.registerPrompt(
     "debug-wordpress-issue",
     {
       description:

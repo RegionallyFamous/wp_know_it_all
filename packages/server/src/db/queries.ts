@@ -185,12 +185,38 @@ export function buildQueries(db: Database.Database) {
 }
 
 function sanitizeFtsQuery(raw: string): string {
-  // Remove FTS5 special characters that would cause parse errors
-  const cleaned = raw.replace(/["*^]/g, " ").trim();
-  // If multi-word, try a phrase search first; fallback to AND
-  const words = cleaned.split(/\s+/).filter(Boolean);
+  // Keep only identifier-friendly tokens to avoid FTS syntax errors.
+  const stopWords = new Set([
+    "a",
+    "an",
+    "the",
+    "how",
+    "what",
+    "when",
+    "where",
+    "why",
+    "which",
+    "do",
+    "does",
+    "is",
+    "are",
+    "to",
+    "in",
+    "on",
+    "for",
+    "with",
+    "of",
+    "and",
+    "or",
+    "i",
+  ]);
+  const words = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 1 && !stopWords.has(w));
   if (words.length === 0) return '""';
-  if (words.length === 1) return cleaned;
-  // Phrase match OR individual AND match for better recall
-  return `"${words.join(" ")}" OR ${words.join(" AND ")}`;
+  if (words.length === 1) return words[0]!;
+  // Phrase match OR token OR strategy gives better recall for natural-language queries.
+  return `"${words.join(" ")}" OR ${words.join(" OR ")}`;
 }

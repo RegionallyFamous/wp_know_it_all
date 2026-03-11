@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vitest run"
+    "test": "vitest run",
+    "eval:quality": "tsx evals/run-evals.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

@@ -65,7 +65,7 @@ async function fetchAllOfType(
     const params = new URLSearchParams({
       per_page: String(PER_PAGE),
       page: String(page),
-      _fields: "id,slug,link,title,content,parent,modified",
+      _fields: "id,slug,link,title,excerpt,content,parent,modified",
       orderby: "modified",
       order: "asc",
     });
@@ -123,7 +123,7 @@ function pageToDocument(
 ): InsertableDocument | null {
   const rawTitle =
     page.title?.rendered?.replace(/<[^>]+>/g, "").trim() || `Untitled (${page.id})`;
-  const renderedContent = page.content?.rendered ?? "";
+  const renderedContent = page.content?.rendered ?? page.excerpt?.rendered ?? "";
   if (!renderedContent.trim()) return null;
 
   const markdown = htmlToMarkdown(renderedContent);
@@ -196,7 +196,7 @@ export async function ingestDevhubContentType(
     onPageData: opts.onDocumentsBatch ? onPageData : undefined,
   });
 
-  if (!opts.onPageData) {
+  if (!opts.onDocumentsBatch) {
     console.log(
       `[devhub] ${type}: fetched ${pages.length} pages${failedPages.length > 0 ? ` (${failedPages.length} failed)` : ""}, converting...`
     );

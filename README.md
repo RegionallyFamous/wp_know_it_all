@@ -17,11 +17,12 @@ The definitive WordPress documentation MCP server. Indexes 10,000+ pages of Word
 | Coding Standards | PHP, JS, CSS, HTML standards | 40 |
 | WP-CLI Handbook | All `wp` commands + handbook | 300 |
 
-## Three tools
+## Core tools
 
 - **`search_wordpress_docs`** — BM25 full-text search with optional category/type filters
 - **`get_wordpress_doc`** — Fetch the full documentation page by slug or ID
 - **`lookup_wordpress_hook`** — Exact name lookup for functions, hooks, and classes with cross-references
+- **`answer_wordpress_question`** — Grounded answer synthesis with structured citations, confidence, and abstention
 
 ## Connecting to your AI client
 
@@ -203,8 +204,31 @@ pnpm restore:db ./backups/wordpress-YYYYMMDD-HHMMSS.db
 
 GitHub Actions includes:
 
-- `.github/workflows/ci.yml` — build, typecheck, lint, and test on PR/push
+- `.github/workflows/ci.yml` — build, typecheck, lint, test, and quality eval gate on PR/push
 - `.github/workflows/security.yml` — weekly dependency audit
+
+### Quality telemetry and thresholds
+
+The answer pipeline emits quality telemetry lines in logs with:
+
+- retrieval latency, rerank latency, answer latency
+- evidence count
+- citation coverage
+- unsupported claim rate
+- abstain reason and confidence
+
+Run local quality gate:
+
+```bash
+pnpm eval:quality
+```
+
+Current thresholds enforced by the evaluator:
+
+- hit@k >= 0.80
+- citation precision >= 0.60
+- unsupported claim rate <= 0.20
+- abstain accuracy >= 1.00
 
 ### Test with MCP Inspector
 

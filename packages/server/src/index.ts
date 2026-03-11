@@ -12,6 +12,7 @@ import { registerSearchTool } from "./tools/search.js";
 import { registerGetDocTool } from "./tools/get-doc.js";
 import { registerLookupTool } from "./tools/lookup-hook.js";
 import { registerValidateTool } from "./tools/validate.js";
+import { registerAnswerQuestionTool } from "./tools/answer-question.js";
 import { registerResources } from "./resources.js";
 import { registerPrompts } from "./prompts.js";
 import { createAdminRouter } from "./admin/router.js";
@@ -251,6 +252,7 @@ function createMcpServer(): McpServer {
   registerGetDocTool(server, queries);
   registerLookupTool(server, queries);
   registerValidateTool(server);
+  registerAnswerQuestionTool(server, queries);
   registerResources(server, queries);
   registerPrompts(server);
 
