@@ -92,24 +92,53 @@ export function requireSameOriginPost(
     return;
   }
 
-  const origin = req.headers.origin;
-  if (!origin) {
+  const rawOrigin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
+  if (!rawOrigin) {
     res.status(403).send("Missing Origin header.");
     return;
   }
 
-  const host = req.headers.host;
+  const rawHostHeader = Array.isArray(req.headers["x-forwarded-host"])
+    ? req.headers["x-forwarded-host"][0]
+    : req.headers["x-forwarded-host"] || req.headers.host;
+  if (!rawHostHeader) {
+    res.status(403).send("Missing Host header.");
+    return;
+  }
+
+  const host = rawHostHeader
+    .split(",")[0]
+    ?.trim()
+    .replace(/^"+|"+$/g, "")
+    .toLowerCase();
   if (!host) {
     res.status(403).send("Missing Host header.");
     return;
   }
 
-  let originHost: string;
-  try {
-    originHost = new URL(origin).host;
-  } catch {
+  const originValue = rawOrigin
+    .split(",")[0]
+    ?.trim()
+    .replace(/^"+|"+$/g, "");
+  if (!originValue || originValue.toLowerCase() === "null") {
     res.status(403).send("Invalid Origin header.");
     return;
+  }
+
+  let originHost: string;
+  try {
+    originHost = new URL(originValue).host.toLowerCase();
+  } catch {
+    // Some proxies/clients may send a host-like value instead of full URL.
+    originHost = originValue
+      .replace(/^https?:\/\//i, "")
+      .split("/")[0]
+      ?.trim()
+      .toLowerCase();
+    if (!originHost) {
+      res.status(403).send("Invalid Origin header.");
+      return;
+    }
   }
 
   if (originHost !== host) {
