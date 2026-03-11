@@ -97,6 +97,32 @@ export function requireSameOriginPost(
     const first = value.split(",")[0]?.trim().replace(/^"+|"+$/g, "");
     return first && first.length > 0 ? first : undefined;
   };
+  const canonicalHost = (value: string): string | undefined => {
+    const cleaned = value.trim().replace(/^"+|"+$/g, "");
+    if (!cleaned) return undefined;
+
+    const format = (hostname: string, port: string): string => {
+      const normalizedHost = hostname.toLowerCase();
+      if (!port || port === "80" || port === "443") {
+        return normalizedHost;
+      }
+      return `${normalizedHost}:${port}`;
+    };
+
+    try {
+      const withScheme = cleaned.includes("://") ? cleaned : `https://${cleaned}`;
+      const parsed = new URL(withScheme);
+      return format(parsed.hostname, parsed.port);
+    } catch {
+      const hostLike = cleaned
+        .replace(/^https?:\/\//i, "")
+        .split("/")[0]
+        ?.trim()
+        .toLowerCase();
+      if (!hostLike) return undefined;
+      return hostLike.replace(/:(80|443)$/u, "");
+    }
+  };
 
   const originValue = firstHeaderValue(req.get("origin"));
   if (!originValue) {
@@ -114,23 +140,16 @@ export function requireSameOriginPost(
     res.status(403).send("Invalid Origin header.");
     return;
   }
-  const host = hostValue.toLowerCase();
+  const host = canonicalHost(hostValue);
+  if (!host) {
+    res.status(403).send("Missing Host header.");
+    return;
+  }
 
-  let originHost: string;
-  try {
-    originHost = new URL(originValue).host.toLowerCase();
-  } catch {
-    // Some proxies/clients may send a host-like value instead of full URL.
-    const fallbackOriginHost = originValue
-      .replace(/^https?:\/\//i, "")
-      .split("/")[0]
-      ?.trim()
-      .toLowerCase();
-    if (!fallbackOriginHost) {
-      res.status(403).send("Invalid Origin header.");
-      return;
-    }
-    originHost = fallbackOriginHost;
+  const originHost = canonicalHost(originValue);
+  if (!originHost) {
+    res.status(403).send("Invalid Origin header.");
+    return;
   }
 
   if (originHost !== host) {
