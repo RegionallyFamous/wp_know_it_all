@@ -26,7 +26,7 @@ function getTurndown(): TurndownService {
       );
     },
     replacement(_content: string, node: HTMLElement) {
-      const code = node.querySelector?.("code") as HTMLElement | null;
+      const code = node.querySelector("code");
       if (!code) return _content;
 
       const langMatch = (code.className ?? "").match(/(?:language|lang)-(\S+)/);

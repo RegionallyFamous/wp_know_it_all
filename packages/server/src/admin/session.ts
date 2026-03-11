@@ -92,38 +92,28 @@ export function requireSameOriginPost(
     return;
   }
 
-  const rawOrigin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin;
-  if (!rawOrigin) {
+  const firstHeaderValue = (value: string | undefined): string | undefined => {
+    const first = value.split(",")[0]?.trim().replace(/^"+|"+$/g, "");
+    return first && first.length > 0 ? first : undefined;
+  };
+
+  const originValue = firstHeaderValue(req.get("origin"));
+  if (!originValue) {
     res.status(403).send("Missing Origin header.");
     return;
   }
 
-  const rawHostHeader = Array.isArray(req.headers["x-forwarded-host"])
-    ? req.headers["x-forwarded-host"][0]
-    : req.headers["x-forwarded-host"] || req.headers.host;
-  if (!rawHostHeader) {
+  const hostValue = firstHeaderValue(req.get("x-forwarded-host") ?? req.get("host"));
+  if (!hostValue) {
     res.status(403).send("Missing Host header.");
     return;
   }
 
-  const host = rawHostHeader
-    .split(",")[0]
-    ?.trim()
-    .replace(/^"+|"+$/g, "")
-    .toLowerCase();
-  if (!host) {
-    res.status(403).send("Missing Host header.");
-    return;
-  }
-
-  const originValue = rawOrigin
-    .split(",")[0]
-    ?.trim()
-    .replace(/^"+|"+$/g, "");
-  if (!originValue || originValue.toLowerCase() === "null") {
+  if (originValue.toLowerCase() === "null") {
     res.status(403).send("Invalid Origin header.");
     return;
   }
+  const host = hostValue.toLowerCase();
 
   let originHost: string;
   try {

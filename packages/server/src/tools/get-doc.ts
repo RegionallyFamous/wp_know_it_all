@@ -14,6 +14,10 @@ export const getDocInputSchema = {
 
 function formatDocument(row: DocumentRow): string {
   const parts: string[] = [];
+  const renderMetaField = (value: unknown): string => {
+    if (typeof value === "string") return value;
+    return JSON.stringify(value, null, 2);
+  };
 
   parts.push(`# ${row.title}`);
   parts.push(`**Type:** ${row.doc_type} | **Category:** ${row.category ?? "unknown"}`);
@@ -51,7 +55,7 @@ function formatDocument(row: DocumentRow): string {
       parts.push(`\n## Parameters\n\`\`\`json\n${JSON.stringify(meta["params"], null, 2)}\n\`\`\``);
     }
     if (meta["return"]) {
-      parts.push(`\n## Return Value\n${String(meta["return"])}`);
+      parts.push(`\n## Return Value\n${renderMetaField(meta["return"])}`);
     }
   }
 
@@ -69,7 +73,7 @@ export function registerGetDocTool(
         "Fetch the full documentation for a WordPress function, hook, class, or handbook page. Provide either a slug or an ID from search_wordpress_docs results.",
       inputSchema: getDocInputSchema,
     },
-    async ({ slug, id }) => {
+    ({ slug, id }) => {
       if (!slug && !id) {
         return {
           content: [{ type: "text", text: "Provide either a slug or an id." }],

@@ -100,13 +100,6 @@ export function buildQueries(db: Database.Database) {
     `SELECT * FROM documents WHERE id = ? LIMIT 1`
   );
 
-  const lookupExactStmt = db.prepare<[string], DocumentRow>(`
-    SELECT * FROM documents
-    WHERE LOWER(slug) = LOWER(?)
-       OR LOWER(title) = LOWER(?)
-    LIMIT 1
-  `);
-
   const lookupExact2Stmt = db.prepare<[string, string], DocumentRow>(`
     SELECT * FROM documents
     WHERE LOWER(slug) = LOWER(?)

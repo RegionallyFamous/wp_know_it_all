@@ -1,5 +1,4 @@
-// Known WordPress hook prefixes and common function prefixes used for detection
-const HOOK_PATTERN = /\b([a-z][a-z0-9_]*(?:_action|_filter)?)\b/g;
+// Common WordPress function/class prefixes used for metadata detection.
 const WP_FUNCTION_PATTERN = /\b(wp_[a-z_]+|get_[a-z_]+|add_[a-z_]+|remove_[a-z_]+|do_[a-z_]+|register_[a-z_]+|unregister_[a-z_]+|the_[a-z_]+|is_[a-z_]+|has_[a-z_]+|update_[a-z_]+|delete_[a-z_]+|sanitize_[a-z_]+|esc_[a-z_]+|WP_[A-Za-z_]+)\b/g;
 const SINCE_PATTERN = /(?:since|added in|@since)\s+([0-9]+\.[0-9]+(?:\.[0-9]+)?)/i;
 const SIGNATURE_PATTERN = /^function\s+(\w+)\s*\(/m;

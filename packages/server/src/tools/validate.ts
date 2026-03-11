@@ -23,7 +23,7 @@ export function registerValidateTool(server: McpServer): void {
           .describe("The context this code runs in — affects which rules apply."),
       },
     },
-    async ({ code }) => {
+    ({ code }) => {
       const result = validateWordPressCode(code);
 
       if (result.issues.length === 0) {

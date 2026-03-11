@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import cookieParser from "cookie-parser";
 import { z } from "zod";
 import type Database from "better-sqlite3";
+import type { LogLine } from "./runner.js";
 import {
   createSession,
   destroySession,
@@ -471,7 +472,7 @@ function renderCheckpoints(
   return table(["Source", "Last Run", "Last Page", "Status"], rows);
 }
 
-function renderLogOutput(lines: import("./runner.js").LogLine[]): string {
+function renderLogOutput(lines: LogLine[]): string {
   if (lines.length === 0) {
     return `<div class="text-slate-600">No output yet. Run the scraper to see logs here.</div>`;
   }

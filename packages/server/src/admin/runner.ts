@@ -64,8 +64,8 @@ export class ScraperRunner {
 
     this.#process = child;
 
-    const rl_out = createInterface({ input: child.stdout!, crlfDelay: Infinity });
-    const rl_err = createInterface({ input: child.stderr!, crlfDelay: Infinity });
+    const rl_out = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const rl_err = createInterface({ input: child.stderr, crlfDelay: Infinity });
 
     rl_out.on("line", (line) => this.#push("stdout", line));
     rl_err.on("line", (line) => this.#push("stderr", line));

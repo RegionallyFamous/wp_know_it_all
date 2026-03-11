@@ -70,6 +70,10 @@ function buildDeprecationWarning(name: string): string | null {
 
 function formatLookup(row: DocumentRow, related: DocumentRow[]): string {
   const parts: string[] = [];
+  const renderMetaField = (value: unknown): string => {
+    if (typeof value === "string") return value;
+    return JSON.stringify(value, null, 2);
+  };
 
   parts.push(`# \`${row.title}\``);
   parts.push(`**Type:** ${row.doc_type} | **Category:** ${row.category ?? "unknown"}`);
@@ -98,7 +102,7 @@ function formatLookup(row: DocumentRow, related: DocumentRow[]): string {
         parts.push(`\n## Parameters\n\`\`\`json\n${JSON.stringify(meta["params"], null, 2)}\n\`\`\``);
       }
       if (meta["return"]) {
-        parts.push(`\n## Return Value\n${String(meta["return"])}`);
+        parts.push(`\n## Return Value\n${renderMetaField(meta["return"])}`);
       }
     } catch {
       // Malformed metadata — skip
@@ -136,7 +140,7 @@ export function registerLookupTool(
         "Look up a specific WordPress function, hook, class, or method by exact name. Returns full documentation, parameters, return values, cross-referenced related items, and a security checklist if applicable. Use this when you know the exact name.",
       inputSchema: lookupInputSchema,
     },
-    async ({ name }) => {
+    ({ name }) => {
       const row = queries.lookupExact(name);
 
       if (!row) {

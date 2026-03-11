@@ -14,7 +14,7 @@ export function registerResources(
         "Overview of all indexed WordPress documentation sections and document counts.",
       mimeType: "text/plain",
     },
-    async () => {
+    () => {
       const stats = queries.stats();
       const categoryLines = Object.entries(stats.by_category)
         .sort(([, a], [, b]) => b - a)
@@ -52,7 +52,7 @@ export function registerResources(
       description: "Quick reference for WordPress PHP, JS, and CSS coding standards.",
       mimeType: "text/plain",
     },
-    async () => ({
+    () => ({
       contents: [
         {
           uri: "wordpress://coding-standards",

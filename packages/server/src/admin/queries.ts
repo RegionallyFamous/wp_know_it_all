@@ -121,10 +121,6 @@ export function buildAdminQueries(db: Database.Database) {
     `SELECT COUNT(*) AS total FROM documents`
   );
 
-  const stmtDeleteAllDocs = db.prepare<[], void>(
-    `DELETE FROM documents`
-  );
-
   return {
     getStats(): AdminStats {
       const { total } = stmtTotalDocs.get()!;
