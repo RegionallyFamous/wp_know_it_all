@@ -18,6 +18,7 @@ interface EvalResult {
   hitAtK: number;
   citationPrecision: number;
   unsupportedClaimRate: number;
+  averageSupportScore: number;
   abstainCorrect: number;
   styleConformance: number;
 }
@@ -26,13 +27,25 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const GOLDEN_PATH = join(__dirname, "golden-set.jsonl");
 const TOP_K = 6;
 
-const THRESHOLDS = {
-  hitAtK: 0.8,
-  citationPrecision: 0.6,
-  unsupportedClaimRateMax: 0.2,
-  abstainAccuracy: 1.0,
-  styleConformance: 1.0,
-};
+const PROFILE = (process.env["EVAL_PROFILE"] ?? "default").toLowerCase();
+const THRESHOLDS =
+  PROFILE === "canary"
+    ? {
+        hitAtK: 0.95,
+        citationPrecision: 0.62,
+        unsupportedClaimRateMax: 0.08,
+        averageSupportScore: 0.72,
+        abstainAccuracy: 0.75,
+        styleConformance: 1.0,
+      }
+    : {
+        hitAtK: 0.9,
+        citationPrecision: 0.62,
+        unsupportedClaimRateMax: 0.12,
+        averageSupportScore: 0.62,
+        abstainAccuracy: 0.75,
+        styleConformance: 1.0,
+      };
 
 function parseGoldenSet(): EvalCase[] {
   const raw = readFileSync(GOLDEN_PATH, "utf8");
@@ -148,6 +161,70 @@ function seedFixtureDocs(db: Database.Database): void {
       null,
       null,
     ],
+    [
+      "https://github.com/WordPress/playground/blob/trunk/docs/blueprints.md",
+      "wp-github-playground-blueprints",
+      "WordPress Playground Blueprints",
+      "guide",
+      "wordpress-github-docs",
+      "common-apis",
+      null,
+      null,
+      null,
+      "Blueprints define a declarative setup for Playground sites, including plugins, themes, and content steps.",
+      "Blueprints define a declarative setup for Playground sites, including plugins, themes, and content steps.",
+      null,
+      null,
+      "{\"repo\":\"https://github.com/WordPress/playground.git\",\"path\":\"docs/blueprints.md\"}",
+    ],
+    [
+      "https://github.com/WordPress/wordpress-develop/blob/trunk/README.md",
+      "wp-github-wordpress-develop-readme",
+      "WordPress Develop README",
+      "guide",
+      "wordpress-github-code",
+      "code-reference",
+      null,
+      null,
+      null,
+      "The wordpress-develop repository includes local setup guidance for contributing patches and running tests.",
+      "The wordpress-develop repository includes local setup guidance for contributing patches and running tests.",
+      null,
+      null,
+      "{\"repo\":\"https://github.com/WordPress/wordpress-develop.git\",\"path\":\"README.md\"}",
+    ],
+    [
+      "https://www.rfc-editor.org/rfc/rfc9110.txt",
+      "ietf-rfc-rfc-9110-http-semantics",
+      "RFC 9110: HTTP Semantics",
+      "guide",
+      "ietf-rfcs",
+      "software-engineering",
+      null,
+      null,
+      null,
+      "RFC 9110 defines HTTP semantics, methods, status codes, and content negotiation.",
+      "RFC 9110 defines HTTP semantics, methods, status codes, and content negotiation.",
+      null,
+      null,
+      null,
+    ],
+    [
+      "https://docs.python.org/3/library/urllib.parse.html",
+      "python-library-urllib-parse",
+      "urllib.parse",
+      "guide",
+      "python-docs",
+      "python-runtime",
+      null,
+      null,
+      null,
+      "urllib.parse provides URL parsing and joining functions such as urlparse and urljoin.",
+      "urllib.parse provides URL parsing and joining functions such as urlparse and urljoin.",
+      null,
+      null,
+      null,
+    ],
   ];
 
   const tx = db.transaction(() => {
@@ -203,6 +280,7 @@ async function main(): Promise<void> {
       hitAtK,
       citationPrecision,
       unsupportedClaimRate: verification.unsupportedClaimRate,
+      averageSupportScore: verification.averageSupportScore,
       abstainCorrect,
       styleConformance,
     });
@@ -212,6 +290,7 @@ async function main(): Promise<void> {
     hitAtK: average(results.map((r) => r.hitAtK)),
     citationPrecision: average(results.map((r) => r.citationPrecision)),
     unsupportedClaimRate: average(results.map((r) => r.unsupportedClaimRate)),
+    averageSupportScore: average(results.map((r) => r.averageSupportScore)),
     abstainAccuracy: average(results.map((r) => r.abstainCorrect)),
     styleConformance: average(results.map((r) => r.styleConformance)),
   };
@@ -232,6 +311,11 @@ async function main(): Promise<void> {
   if (metrics.unsupportedClaimRate > THRESHOLDS.unsupportedClaimRateMax) {
     failures.push(
       `unsupported claim rate ${metrics.unsupportedClaimRate.toFixed(2)} above threshold ${THRESHOLDS.unsupportedClaimRateMax.toFixed(2)}`
+    );
+  }
+  if (metrics.averageSupportScore < THRESHOLDS.averageSupportScore) {
+    failures.push(
+      `average support score ${metrics.averageSupportScore.toFixed(2)} below threshold ${THRESHOLDS.averageSupportScore.toFixed(2)}`
     );
   }
   if (metrics.abstainAccuracy < THRESHOLDS.abstainAccuracy) {

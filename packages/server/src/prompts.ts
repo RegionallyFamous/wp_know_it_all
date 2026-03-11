@@ -20,6 +20,11 @@ export function registerPrompts(server: McpServer): void {
             "coding-standards",
             "admin",
             "scf",
+            "php-core",
+            "nodejs-runtime",
+            "web-platform",
+            "software-engineering",
+            "python-runtime",
           ])
           .optional()
           .describe("Optional category focus."),

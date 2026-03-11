@@ -3,7 +3,17 @@ import { basename, extname, join } from "node:path";
 import { simpleGit } from "simple-git";
 
 export function* walkFiles(dir: string, exts: ReadonlySet<string>): Generator<string> {
+  const skipDirs = new Set([
+    ".git",
+    ".github",
+    "node_modules",
+    "vendor",
+    "dist",
+    "build",
+    ".next",
+  ]);
   for (const entry of readdirSync(dir)) {
+    if (skipDirs.has(entry)) continue;
     const full = join(dir, entry);
     const stat = statSync(full);
     if (stat.isDirectory()) {

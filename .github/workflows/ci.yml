@@ -41,3 +41,6 @@ jobs:
 
       - name: Quality eval gate
         run: pnpm eval:quality
+
+      - name: Canary eval gate
+        run: pnpm eval:canary

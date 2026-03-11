@@ -21,10 +21,18 @@ function sourcePrior(source: SearchResult["source"]): number {
     case "gutenberg-github":
     case "wpcli-github":
       return 20;
+    case "wordpress-github-docs":
+      return 14;
+    case "wordpress-github-code":
+      return 9;
     case "php-manual":
     case "nodejs-docs":
     case "mdn-webdocs":
       return 5;
+    case "ietf-rfcs":
+      return 10;
+    case "python-docs":
+      return 6;
     default:
       return 0;
   }

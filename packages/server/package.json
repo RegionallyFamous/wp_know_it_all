@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
-    "eval:quality": "tsx evals/run-evals.ts"
+    "eval:quality": "tsx evals/run-evals.ts",
+    "eval:canary": "EVAL_PROFILE=canary tsx evals/run-evals.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

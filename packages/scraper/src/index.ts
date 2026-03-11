@@ -7,10 +7,16 @@ import { ingestWpCliHandbook } from "./ingestors/wpcli-handbook.js";
 import { ingestPhpManual } from "./ingestors/php-manual.js";
 import { ingestNodejsDocs } from "./ingestors/nodejs-docs.js";
 import { ingestMdnWebDocs } from "./ingestors/mdn-webdocs.js";
+import { ingestIetfRfcs } from "./ingestors/ietf-rfcs.js";
+import { ingestPythonDocs } from "./ingestors/python-docs.js";
 import { getCuratedBestPractices } from "./lib/best-practices.js";
 import { JobTracker } from "./lib/job-tracker.js";
 import type { InsertableDocument } from "./db/writer.js";
 import { ADJACENT_SOURCE_ORDER, type AdjacentSourceType } from "./ingestors/adjacent-manifests.js";
+import {
+  ingestWordPressGithubRepo,
+  selectWordPressGithubRepos,
+} from "./ingestors/wordpress-github-generic.js";
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const volumePath = process.env["RAILWAY_VOLUME_MOUNT_PATH"] ?? "./data";
@@ -25,6 +31,9 @@ const isIncremental = process.env["INCREMENTAL"] === "1";
 // SKIP_GITHUB=1 — skip GitHub clone sources (useful in memory-constrained envs)
 const skipGithub = process.env["SKIP_GITHUB"] === "1";
 
+// SKIP_GITHUB_WORDPRESS=1 — skip curated WordPress GitHub source manifests.
+const skipGithubWordPress = process.env["SKIP_GITHUB_WORDPRESS"] === "1";
+
 // SKIP_CURATED=1 — skip curated best-practice examples
 const skipCurated = process.env["SKIP_CURATED"] === "1";
 
@@ -38,6 +47,20 @@ const adjacentTypeFilter = process.env["INGEST_ADJACENT_TYPES"]
   .filter((s): s is AdjacentSourceType =>
     (ADJACENT_SOURCE_ORDER as string[]).includes(s)
   );
+
+// GITHUB_REPOS=wordpress-develop,playground — select a subset of WordPress GitHub repos
+const githubRepoFilter = process.env["GITHUB_REPOS"]
+  ?.split(",")
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0);
+
+// GITHUB_TIER=tier1|tier2 — tier1 defaults to curated high-signal repos
+const githubTier = process.env["GITHUB_TIER"] === "tier2" ? "tier2" : "tier1";
+
+// GITHUB_MAX_DOCS_PER_REPO=120 — optional hard cap over manifest defaults
+const githubMaxDocsPerRepo = process.env["GITHUB_MAX_DOCS_PER_REPO"]
+  ? Number.parseInt(process.env["GITHUB_MAX_DOCS_PER_REPO"], 10)
+  : undefined;
 
 async function main(): Promise<void> {
   console.log(`\n[scraper] WP Know It All — Documentation Scraper`);
@@ -148,6 +171,8 @@ async function main(): Promise<void> {
       "php-manual": ingestPhpManual,
       "nodejs-docs": ingestNodejsDocs,
       "mdn-webdocs": ingestMdnWebDocs,
+      "ietf-rfcs": ingestIetfRfcs,
+      "python-docs": ingestPythonDocs,
     };
 
     for (const sourceType of adjacentSources) {
@@ -206,6 +231,45 @@ async function main(): Promise<void> {
         totalErrors++;
         hasSourceFailures = true;
         summary[name] = { docs: 0, errors: 1 };
+      }
+    }
+
+    if (!skipGithubWordPress) {
+      const wpRepos = selectWordPressGithubRepos({
+        tier: githubTier,
+        repoKeys: githubRepoFilter,
+      });
+      console.log(
+        `[scraper] Phase 3b: WordPress GitHub curated repos (${wpRepos.length} selected, tier=${githubTier})`
+      );
+
+      for (const repo of wpRepos) {
+        const sourceKey = `wordpress-github:${repo.key}`;
+        tracker.startSource(jobId, sourceKey);
+
+        try {
+          const docs = await ingestWordPressGithubRepo({
+            repoKey: repo.key,
+            maxDocs: githubMaxDocsPerRepo && githubMaxDocsPerRepo > 0 ? githubMaxDocsPerRepo : undefined,
+          });
+          if (docs.length > 0) {
+            writer.insertBatch(docs);
+            totalDocs += docs.length;
+            console.log(
+              `[scraper] ✓ ${sourceKey}: ${docs.length} docs (total: ${writer.count().toLocaleString()})`
+            );
+          }
+          tracker.completeSource(jobId, sourceKey, docs.length, 0);
+          summary[sourceKey] = { docs: docs.length, errors: 0 };
+        } catch (err) {
+          const msg = String(err);
+          console.error(`[scraper] ✗ ${sourceKey} failed: ${msg}`);
+          tracker.logError(jobId, sourceKey, null, msg);
+          tracker.failSource(jobId, sourceKey, msg);
+          totalErrors++;
+          hasSourceFailures = true;
+          summary[sourceKey] = { docs: 0, errors: 1 };
+        }
       }
     }
   }

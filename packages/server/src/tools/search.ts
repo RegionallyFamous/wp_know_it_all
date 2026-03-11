@@ -25,6 +25,8 @@ export const searchInputSchema = {
       "php-core",
       "nodejs-runtime",
       "web-platform",
+      "software-engineering",
+      "python-runtime",
     ])
     .optional()
     .describe("Filter results to a specific documentation section."),

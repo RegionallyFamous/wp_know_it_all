@@ -27,6 +27,7 @@ import {
   loginPage,
 } from "./templates.js";
 import type { Request, Response } from "express";
+import { readRecentQualityEvents, summarizeQualityEvents } from "../lib/quality-metrics.js";
 
 function resolveScraperEntrypoint(): {
   entrypoint: string;
@@ -323,9 +324,13 @@ function renderSearchPage(): string {
     { value: "devhub-api", label: "WordPress DevHub API" },
     { value: "gutenberg-github", label: "Gutenberg (GitHub)" },
     { value: "wpcli-github", label: "WP-CLI (GitHub)" },
+    { value: "wordpress-github-docs", label: "WordPress GitHub Docs (Curated)" },
+    { value: "wordpress-github-code", label: "WordPress GitHub Code (Curated)" },
     { value: "php-manual", label: "PHP Manual" },
     { value: "nodejs-docs", label: "Node.js Docs" },
     { value: "mdn-webdocs", label: "MDN Web Docs" },
+    { value: "ietf-rfcs", label: "IETF RFCs" },
+    { value: "python-docs", label: "Python Docs" },
   ];
   const categoryOptions = [
     { value: "", label: "All categories" },
@@ -341,6 +346,8 @@ function renderSearchPage(): string {
     { value: "php-core", label: "php-core" },
     { value: "nodejs-runtime", label: "nodejs-runtime" },
     { value: "web-platform", label: "web-platform" },
+    { value: "software-engineering", label: "software-engineering" },
+    { value: "python-runtime", label: "python-runtime" },
   ];
   const renderSelectOptions = (options: Array<{ value: string; label: string }>): string =>
     options
@@ -581,6 +588,46 @@ function renderLogOutput(lines: LogLine[]): string {
   return lines.map(logLine).join("\n");
 }
 
+function renderQualityPage(): string {
+  const events = readRecentQualityEvents(250);
+  const summary = summarizeQualityEvents(events);
+  const recentRows = events
+    .slice(-30)
+    .reverse()
+    .map((event) => [
+      new Date(event.ts).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+      escapeHtml(event.tool),
+      event.synthesisEngine ? escapeHtml(event.synthesisEngine) : "deterministic",
+      event.abstained ? `<span class="text-amber-400">yes</span>` : "no",
+      `${Math.round(event.citationCoverage * 100)}%`,
+      `${Math.round((event.averageSupportScore ?? 0) * 100)}%`,
+      `${Math.round(event.confidence * 100)}%`,
+      `${event.answerLatencyMs}ms`,
+    ]);
+
+  return `
+<div class="mb-8">
+  <h1 class="text-2xl font-bold text-slate-100">Quality</h1>
+  <p class="text-sm text-slate-500 mt-1">Wrangler answer quality and reliability telemetry</p>
+</div>
+<div class="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
+  ${statCard("Events", summary.totalEvents.toLocaleString(), "sky")}
+  ${statCard("Citation", `${Math.round(summary.avgCitationCoverage * 100)}%`, "emerald")}
+  ${statCard("Support", `${Math.round(summary.avgSupportScore * 100)}%`, "violet")}
+  ${statCard("Unsupported", `${Math.round(summary.avgUnsupportedClaimRate * 100)}%`, "rose")}
+  ${statCard("Abstain", `${Math.round(summary.abstainRate * 100)}%`, "amber")}
+  ${statCard("Ollama Use", `${Math.round(summary.ollamaUsageRate * 100)}%`, "slate")}
+</div>
+${table(["Timestamp", "Tool", "Engine", "Abstained", "Citation", "Support", "Confidence", "Latency"], recentRows)}
+`;
+}
+
 // ── Router factory ───────────────────────────────────────────────────────────
 
 export function createAdminRouter(db: Database.Database): ReturnType<typeof Router> {
@@ -593,9 +640,13 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
         "devhub-api",
         "gutenberg-github",
         "wpcli-github",
+        "wordpress-github-docs",
+        "wordpress-github-code",
         "php-manual",
         "nodejs-docs",
         "mdn-webdocs",
+        "ietf-rfcs",
+        "python-docs",
       ])
       .optional(),
     category: z
@@ -612,6 +663,8 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
         "php-core",
         "nodejs-runtime",
         "web-platform",
+        "software-engineering",
+        "python-runtime",
       ])
       .optional(),
     limit: z.coerce.number().int().min(1).max(200).optional().default(50),
@@ -690,6 +743,10 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
 
   router.get("/search", (_req: Request, res: Response) => {
     res.send(page("Search", renderSearchPage(), "search"));
+  });
+
+  router.get("/quality", (_req: Request, res: Response) => {
+    res.send(page("Quality", renderQualityPage(), "quality"));
   });
 
   router.get("/search/results", (req: Request, res: Response) => {

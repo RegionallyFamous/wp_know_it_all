@@ -101,9 +101,17 @@ Set these environment variables in the Railway dashboard:
 | `ADMIN_PASSWORD` | Required in production to enable admin sign-in |
 | `ALLOWED_HOSTS` | Comma-separated host allowlist for DNS-rebinding protection (e.g. `your-service.up.railway.app`) |
 | `SCRAPER_ENTRY` (optional) | Absolute path to scraper entrypoint. Default auto-resolves to `/app/packages/scraper/dist/index.js` |
-| `OLLAMA_HOST` (optional) | Ollama endpoint used for query expansion |
-| `OLLAMA_MODEL` (optional) | Query expansion model (default `qwen2.5-coder:1.5b`) |
+| `OLLAMA_HOST` (optional) | Ollama endpoint used for query expansion and answer synthesis |
+| `OLLAMA_MODEL` (optional) | Default Ollama model; used for query expansion unless overridden |
 | `OLLAMA_EXPAND_TIMEOUT_MS` (optional) | Ollama query-expansion time budget in ms (default `250`) |
+| `GITHUB_TIER` (optional) | Curated WordPress GitHub tier for scraper (`tier1` default, `tier2` opt-in) |
+| `GITHUB_REPOS` (optional) | Comma-separated WordPress GitHub repo keys to ingest (subset override) |
+| `GITHUB_MAX_DOCS_PER_REPO` (optional) | Hard cap for docs ingested per WordPress GitHub repo |
+| `SKIP_GITHUB_WORDPRESS` (optional) | Set `1` to skip curated WordPress GitHub repo ingestion |
+| `OLLAMA_ANSWER_MODEL` (optional) | Ollama model for grounded answer synthesis (default `qwen2.5-coder:7b`) |
+| `OLLAMA_CRITIC_MODEL` (optional) | Ollama model for answer critique pass (default `OLLAMA_ANSWER_MODEL`) |
+| `OLLAMA_ANSWER_TIMEOUT_MS` (optional) | Ollama answer synthesis timeout in ms (default `1800`) |
+| `OLLAMA_CRITIC_TIMEOUT_MS` (optional) | Ollama critique timeout in ms (default `1200`) |
 
 ### 3. Attach a persistent volume
 

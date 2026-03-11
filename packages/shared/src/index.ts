@@ -4,9 +4,13 @@ export type DocSource =
   | "devhub-api"
   | "gutenberg-github"
   | "wpcli-github"
+  | "wordpress-github-docs"
+  | "wordpress-github-code"
   | "php-manual"
   | "nodejs-docs"
-  | "mdn-webdocs";
+  | "mdn-webdocs"
+  | "ietf-rfcs"
+  | "python-docs";
 
 export type DocCategory =
   | "code-reference"
@@ -20,7 +24,9 @@ export type DocCategory =
   | "scf"
   | "php-core"
   | "nodejs-runtime"
-  | "web-platform";
+  | "web-platform"
+  | "software-engineering"
+  | "python-runtime";
 
 export interface Document {
   id: number;

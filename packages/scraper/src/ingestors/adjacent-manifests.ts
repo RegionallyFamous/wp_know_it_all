@@ -1,9 +1,16 @@
-export type AdjacentSourceType = "php-manual" | "nodejs-docs" | "mdn-webdocs";
+export type AdjacentSourceType =
+  | "php-manual"
+  | "nodejs-docs"
+  | "mdn-webdocs"
+  | "ietf-rfcs"
+  | "python-docs";
 
 export const ADJACENT_SOURCE_ORDER: AdjacentSourceType[] = [
   "php-manual",
   "nodejs-docs",
   "mdn-webdocs",
+  "ietf-rfcs",
+  "python-docs",
 ];
 
 export const NODEJS_DOCS_MANIFEST = {
@@ -40,4 +47,38 @@ export const PHP_MANUAL_MANIFEST = {
   ],
   docsRoot: ".",
   baseUrl: "https://www.php.net/manual/en",
+} as const;
+
+export const IETF_RFCS_MANIFEST = {
+  // Curated, canonical RFC URLs to avoid open-ended crawling.
+  urls: [
+    "https://www.rfc-editor.org/rfc/rfc9110.txt", // HTTP Semantics
+    "https://www.rfc-editor.org/rfc/rfc9111.txt", // HTTP Caching
+    "https://www.rfc-editor.org/rfc/rfc9112.txt", // HTTP/1.1
+    "https://www.rfc-editor.org/rfc/rfc9113.txt", // HTTP/2
+    "https://www.rfc-editor.org/rfc/rfc9114.txt", // HTTP/3
+    "https://www.rfc-editor.org/rfc/rfc3986.txt", // URI Syntax
+    "https://www.rfc-editor.org/rfc/rfc7239.txt", // Forwarded Header
+  ],
+} as const;
+
+export const PYTHON_DOCS_MANIFEST = {
+  repoUrl: "https://github.com/python/cpython.git",
+  branch: "main",
+  sparsePaths: [
+    "Doc/library/urllib.parse.rst",
+    "Doc/library/urllib.request.rst",
+    "Doc/library/http.client.rst",
+    "Doc/library/http.server.rst",
+    "Doc/library/json.rst",
+    "Doc/library/pathlib.rst",
+    "Doc/library/dataclasses.rst",
+    "Doc/library/typing.rst",
+    "Doc/library/asyncio.rst",
+    "Doc/library/logging.rst",
+    "Doc/reference/expressions.rst",
+    "Doc/reference/simple_stmts.rst",
+  ],
+  docsRoot: "Doc",
+  baseUrl: "https://docs.python.org/3",
 } as const;

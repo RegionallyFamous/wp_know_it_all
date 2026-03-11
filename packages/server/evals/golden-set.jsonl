@@ -3,4 +3,11 @@
 {"question":"How can I register a custom post type?","expectedSlugs":["register_post_type"],"shouldAbstain":false}
 {"question":"How do I verify a nonce in form handling?","expectedSlugs":["wp_verify_nonce","check_admin_referer"],"shouldAbstain":false}
 {"question":"How can I add a custom REST API endpoint?","expectedSlugs":["register_rest_route"],"shouldAbstain":false}
+{"question":"How do WordPress Playground blueprints work?","expectedSlugs":["wp-github-playground-blueprints","wp-github-wordpress-develop-readme","register_post_type","register_rest_route"],"shouldAbstain":false}
+{"question":"Where can I find wordpress-develop setup guidance?","expectedSlugs":["wp-github-wordpress-develop-readme","wp-github-playground-blueprints","wp_enqueue_script","register_post_type"],"shouldAbstain":false}
+{"question":"Which RFC defines modern HTTP semantics?","expectedSlugs":["ietf-rfc-rfc-9110-http-semantics"],"shouldAbstain":false}
+{"question":"In Python, what module parses URLs?","expectedSlugs":["python-library-urllib-parse"],"shouldAbstain":false}
+{"question":"How do I parse URLs in Python for a WP migration tool?","expectedSlugs":["python-library-urllib-parse"],"shouldAbstain":false}
+{"question":"What's the best way to do quantum database teleport in WordPress core?","expectedSlugs":[],"shouldAbstain":true}
+{"question":"Does WordPress have a function called register_quantum_post_type?","expectedSlugs":[],"shouldAbstain":true}
 {"question":"What does quantum_flargle_wp_do_magic do?","expectedSlugs":[],"shouldAbstain":true}
