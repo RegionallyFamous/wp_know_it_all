@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1
+# Scraper — runs as a Railway cron job, MUST exit with code 0 after completion.
+# If the process stays alive, Railway marks it Active and skips the next run.
+
+# ── Stage 1: Build ────────────────────────────────────────────────────────────
+FROM node:22-slim AS build
+WORKDIR /app
+
+RUN corepack enable
+
+COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/scraper/package.json ./packages/scraper/
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/shared/ ./packages/shared/
+COPY packages/scraper/ ./packages/scraper/
+
+RUN pnpm --filter @wp-know-it-all/shared build
+RUN pnpm --filter @wp-know-it-all/scraper build
+
+# ── Stage 2: Production ───────────────────────────────────────────────────────
+FROM node:22-slim AS production
+
+ENV NODE_ENV=production
+
+WORKDIR /app
+
+# git is required for simple-git (GitHub clone)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Configure git to not prompt for credentials
+RUN git config --global credential.helper "" \
+ && git config --global core.askpass ""
+
+COPY --from=build /app/node_modules                    ./node_modules
+COPY --from=build /app/packages/shared/node_modules   ./packages/shared/node_modules
+COPY --from=build /app/packages/scraper/node_modules  ./packages/scraper/node_modules
+COPY --from=build /app/packages/shared/dist           ./packages/shared/dist
+COPY --from=build /app/packages/scraper/dist          ./packages/scraper/dist
+COPY package.json pnpm-workspace.yaml                  ./
+COPY packages/shared/package.json                      ./packages/shared/
+COPY packages/scraper/package.json                     ./packages/scraper/
+
+# Scraper writes to the Railway volume — default fallback for local testing
+RUN mkdir -p /data
+
+# MUST exit 0 after completion (Railway cron requirement)
+CMD ["node", "packages/scraper/dist/index.js"]

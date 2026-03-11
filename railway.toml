@@ -1,0 +1,22 @@
+# railway.toml — Server service
+# Scraper service uses packages/scraper/railway.scraper.toml (configure separately in Railway dashboard)
+
+"$schema" = "https://railway.com/railway.schema.json"
+
+[build]
+builder        = "DOCKERFILE"
+dockerfilePath = "packages/server/Dockerfile"
+watchPatterns  = [
+  "packages/server/src/**",
+  "packages/shared/src/**",
+  "packages/server/package.json",
+  "packages/shared/package.json",
+  "packages/server/Dockerfile",
+  "tsconfig.base.json"
+]
+
+[deploy]
+healthcheckPath         = "/health"
+healthcheckTimeout      = 120
+restartPolicyType       = "ON_FAILURE"
+restartPolicyMaxRetries = 3

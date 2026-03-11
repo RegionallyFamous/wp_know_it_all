@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Env files
+.env
+.env.local
+.env.*.local
+packages/*/.env
+packages/*/.env.local
+packages/*/.env.*.local
+
+# Runtime data
+data/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+
+# Railway local state
+.railway/

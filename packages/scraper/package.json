@@ -1,0 +1,31 @@
+{
+  "name": "@wp-know-it-all/scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@wp-know-it-all/shared": "workspace:*",
+    "better-sqlite3": "^11.9.1",
+    "php-parser": "^3.4.0",
+    "simple-git": "^3.27.0",
+    "turndown": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.13.14",
+    "@types/turndown": "^5.0.5",
+    "@vitest/coverage-v8": "^3.1.1",
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  }
+}
