@@ -55,10 +55,10 @@ COPY --chown=nodejs:nodejs package.json pnpm-workspace.yaml                  ./
 COPY --chown=nodejs:nodejs packages/shared/package.json                      ./packages/shared/
 COPY --chown=nodejs:nodejs packages/server/package.json                      ./packages/server/
 
-USER nodejs
-
 # Default local data dir; Railway provides mount path via RAILWAY_VOLUME_MOUNT_PATH
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && chown nodejs:nodejs /app/data
+
+USER nodejs
 
 EXPOSE 3000
 
