@@ -1,6 +1,10 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { simpleGit } from "simple-git";
+
+function normalizeGitRemote(url: string): string {
+  return url.trim().replace(/\.git$/i, "").replace(/\/+$/g, "");
+}
 
 export function* walkFiles(dir: string, exts: ReadonlySet<string>): Generator<string> {
   const skipDirs = new Set([
@@ -12,10 +16,26 @@ export function* walkFiles(dir: string, exts: ReadonlySet<string>): Generator<st
     "build",
     ".next",
   ]);
-  for (const entry of readdirSync(dir)) {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch (err) {
+    console.warn(`[walkFiles] Unable to read directory ${dir}: ${String(err)}`);
+    return;
+  }
+
+  for (const entry of entries) {
     if (skipDirs.has(entry)) continue;
     const full = join(dir, entry);
-    const stat = statSync(full);
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(full);
+    } catch (err) {
+      console.warn(`[walkFiles] Unable to stat ${full}: ${String(err)}`);
+      continue;
+    }
+    // Avoid following symlinks into unexpected paths.
+    if (stat.isSymbolicLink()) continue;
     if (stat.isDirectory()) {
       yield* walkFiles(full, exts);
       continue;
@@ -34,6 +54,14 @@ export async function ensureSparseRepo(opts: {
   label: string;
 }): Promise<void> {
   const { repoDir, repoUrl, branch, sparsePaths, label } = opts;
+  const normalizedSparsePaths = [...new Set(sparsePaths.map((p) => p.trim()).filter((p) => p.length > 0))];
+  if (normalizedSparsePaths.length === 0) {
+    throw new Error(`[${label}] sparsePaths must contain at least one path`);
+  }
+
+  const applySparsePaths = async (): Promise<void> => {
+    await simpleGit(repoDir).raw(["sparse-checkout", "set", ...normalizedSparsePaths]);
+  };
   if (!existsSync(repoDir)) {
     console.log(`[${label}] Cloning ${repoUrl} (sparse checkout)...`);
     const git = simpleGit();
@@ -44,12 +72,20 @@ export async function ensureSparseRepo(opts: {
       "--single-branch",
       `--branch=${branch}`,
     ]);
-    await simpleGit(repoDir).raw(["sparse-checkout", "set", ...sparsePaths]);
+    await applySparsePaths();
     return;
   }
 
   console.log(`[${label}] Updating existing clone...`);
-  await simpleGit(repoDir).pull("origin", branch, ["--depth=1"]);
+  const repoGit = simpleGit(repoDir);
+  const originUrl = (await repoGit.raw(["remote", "get-url", "origin"])).trim();
+  if (normalizeGitRemote(originUrl) !== normalizeGitRemote(repoUrl)) {
+    throw new Error(
+      `[${label}] Existing repo remote mismatch: expected "${repoUrl}", got "${originUrl}"`
+    );
+  }
+  await applySparsePaths();
+  await repoGit.pull("origin", branch, ["--depth=1"]);
 }
 
 export function stripMarkdownFrontMatter(markdown: string): {

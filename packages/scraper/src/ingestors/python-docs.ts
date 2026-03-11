@@ -1,12 +1,28 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { markdownToPlain } from "../pipeline/html-to-md.js";
 import { extractMetadata } from "../pipeline/metadata.js";
 import type { InsertableDocument } from "../db/writer.js";
 import { PYTHON_DOCS_MANIFEST } from "./adjacent-manifests.js";
-import { ensureSparseRepo, slugify, walkFiles } from "./adjacent-utils.js";
+import { ensureSparseRepo, slugify } from "./adjacent-utils.js";
 import { isHighValueDocument } from "./quality.js";
+
+const PYTHON_ALLOWLIST = new Set<string>([
+  "library/urllib.parse.rst",
+  "library/urllib.request.rst",
+  "library/http.client.rst",
+  "library/http.server.rst",
+  "library/json.rst",
+  "library/pathlib.rst",
+  "library/dataclasses.rst",
+  "library/typing.rst",
+  "library/asyncio.rst",
+  "library/logging.rst",
+  "reference/expressions.rst",
+  "reference/simple_stmts.rst",
+]);
+const PYTHON_MAX_FILE_BYTES = 500_000;
 
 function rstToMarkdown(rst: string): string {
   return rst
@@ -62,14 +78,12 @@ export async function ingestPythonDocs(cloneDir?: string): Promise<InsertableDoc
   const documents: InsertableDocument[] = [];
   const seenUrls = new Set<string>();
   const seenSlugs = new Set<string>();
-  const exts = new Set([".rst"]);
-
-  for (const filePath of walkFiles(docsRoot, exts)) {
-    const relPath = relative(docsRoot, filePath).replace(/\\/g, "/");
-    if (!relPath.startsWith("library/") && !relPath.startsWith("reference/")) continue;
-
+  for (const relPath of PYTHON_ALLOWLIST) {
+    const filePath = join(docsRoot, relPath);
+    if (!existsSync(filePath)) continue;
     const rst = readFileSync(filePath, "utf-8");
     if (!rst.trim()) continue;
+    if (Buffer.byteLength(rst, "utf8") > PYTHON_MAX_FILE_BYTES) continue;
 
     const markdown = rstToMarkdown(rst);
     if (!markdown) continue;
@@ -99,6 +113,8 @@ export async function ingestPythonDocs(cloneDir?: string): Promise<InsertableDoc
         ecosystem: "python",
         section: sectionFromPath(relPath),
         repo: PYTHON_DOCS_MANIFEST.repoUrl,
+        branch: PYTHON_DOCS_MANIFEST.branch,
+        path: relPath,
       },
     };
 
