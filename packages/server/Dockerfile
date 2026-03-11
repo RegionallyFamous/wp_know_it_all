@@ -50,8 +50,6 @@ COPY --from=build --chown=nodejs:nodejs /prod/server ./packages/server
 RUN mkdir -p /app/data /tmp/.cache/node/corepack/v1 \
  && chown -R nodejs:nodejs /app/data /tmp/.cache
 
-USER nodejs
-
 EXPOSE 3000
 
 # Dockerfile HEALTHCHECK for local dev — Railway uses railway.toml healthcheckPath
