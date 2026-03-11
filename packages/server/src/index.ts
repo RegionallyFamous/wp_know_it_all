@@ -154,6 +154,7 @@ app.use((_req, res, next) => {
     [
       "default-src 'self'",
       "script-src 'self' https://cdn.jsdelivr.net https://unpkg.com",
+      "connect-src 'self' https://cdn.jsdelivr.net https://unpkg.com",
       "img-src 'self' data:",
       "style-src 'self' 'unsafe-inline'",
       "frame-ancestors 'none'",
