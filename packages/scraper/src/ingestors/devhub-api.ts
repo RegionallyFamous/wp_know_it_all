@@ -121,11 +121,12 @@ function pageToDocument(
   category: (typeof DEVHUB_CONTENT_TYPES)[number]["category"],
   docType: (typeof DEVHUB_CONTENT_TYPES)[number]["docType"]
 ): InsertableDocument | null {
-  const rawTitle = page.title.rendered.replace(/<[^>]+>/g, "").trim() || `Untitled (${page.id})`;
+  const rawTitle =
+    page.title?.rendered?.replace(/<[^>]+>/g, "").trim() || `Untitled (${page.id})`;
+  const renderedContent = page.content?.rendered ?? "";
+  if (!renderedContent.trim()) return null;
 
-  if (!page.content.rendered?.trim()) return null;
-
-  const markdown = htmlToMarkdown(page.content.rendered);
+  const markdown = htmlToMarkdown(renderedContent);
   if (!markdown.trim()) return null;
 
   const plain = markdownToPlain(markdown);
@@ -137,7 +138,7 @@ function pageToDocument(
   }
 
   return {
-    url: page.link,
+    url: page.link || `https://developer.wordpress.org/?p=${page.id}`,
     slug,
     title: rawTitle,
     doc_type: docType,
@@ -145,7 +146,7 @@ function pageToDocument(
     category,
     signature: meta.signature,
     since_version: meta.since_version,
-    parent_id: page.parent > 0 ? page.parent : null,
+    parent_id: page.parent && page.parent > 0 ? page.parent : null,
     content_markdown: markdown,
     content_plain: plain,
     functions_mentioned: meta.functions_mentioned.length > 0 ? meta.functions_mentioned : null,
@@ -192,7 +193,7 @@ export async function ingestDevhubContentType(
 
   const { pages, failedPages } = await fetchAllOfType(type, {
     ...opts,
-    onPageData: opts.onPageData ? onPageData : undefined,
+    onPageData: opts.onDocumentsBatch ? onPageData : undefined,
   });
 
   if (!opts.onPageData) {

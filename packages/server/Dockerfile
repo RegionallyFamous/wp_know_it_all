@@ -48,6 +48,11 @@ ENV XDG_CACHE_HOME=/tmp/.cache
 
 WORKDIR /app
 
+# Runtime dependency for GitHub ingestors invoked from admin-triggered scraper.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 # Non-root user
 RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 --ingroup nodejs nodejs
