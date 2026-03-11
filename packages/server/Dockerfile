@@ -12,8 +12,8 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/server/package.json ./packages/server/
 
-# Install production deps only (better-sqlite3 native build happens here)
-RUN pnpm install --frozen-lockfile --prod
+# Install only server runtime deps (+ transitive workspace deps like shared)
+RUN pnpm install --frozen-lockfile --prod --filter @wp-know-it-all/server...
 
 # ── Stage 2: Build TypeScript ─────────────────────────────────────────────────
 FROM node:22-slim AS build
