@@ -59,9 +59,8 @@ COPY --chown=nodejs:nodejs packages/server/package.json                      ./p
 
 USER nodejs
 
-# Default data dir (overridden by Railway volume at RAILWAY_VOLUME_MOUNT_PATH)
+# Default local data dir; Railway provides mount path via RAILWAY_VOLUME_MOUNT_PATH
 RUN mkdir -p /app/data
-VOLUME ["/data"]
 
 EXPOSE 3000
 
