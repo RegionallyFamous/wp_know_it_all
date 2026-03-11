@@ -14,6 +14,22 @@ function includesWordBoundary(haystack: string, needle: string): boolean {
   return pattern.test(haystack);
 }
 
+function sourcePrior(source: SearchResult["source"]): number {
+  switch (source) {
+    case "devhub-api":
+      return 30;
+    case "gutenberg-github":
+    case "wpcli-github":
+      return 20;
+    case "php-manual":
+    case "nodejs-docs":
+    case "mdn-webdocs":
+      return 5;
+    default:
+      return 0;
+  }
+}
+
 export function rerankCandidates(
   candidates: RetrievalCandidate[],
   query: string,
@@ -31,6 +47,7 @@ export function rerankCandidates(
     if (candidate.source === "exact") score += 100;
     if (candidate.source === "bm25") score += 30;
     if (candidate.source === "related") score += 10;
+    score += sourcePrior(result.source);
 
     // Rank prior from each source
     score += Math.max(0, 20 - candidate.rank * 2);

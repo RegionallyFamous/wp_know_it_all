@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 export interface AdminStats {
   totalDocs: number;
   byCategory: Array<{ category: string; count: number }>;
+  bySource: Array<{ source: string; count: number }>;
   lastJob: {
     id: number;
     status: string;
@@ -40,6 +41,7 @@ export interface DocSearchResult {
   title: string;
   slug: string;
   doc_type: string;
+  source: string;
   category: string | null;
   url: string;
 }
@@ -53,6 +55,12 @@ export function buildAdminQueries(db: Database.Database) {
     `SELECT COALESCE(category, 'uncategorized') AS category, COUNT(*) AS count
      FROM documents
      GROUP BY category
+     ORDER BY count DESC`
+  );
+  const stmtBySource = db.prepare<[], { source: string; count: number }>(
+    `SELECT source, COUNT(*) AS count
+     FROM documents
+     GROUP BY source
      ORDER BY count DESC`
   );
 
@@ -96,25 +104,11 @@ export function buildAdminQueries(db: Database.Database) {
      ORDER BY source_type ASC`
   );
 
-  const stmtSearchDocs = db.prepare<[string, string, string, number, number], DocSearchResult>(
-    `SELECT id, title, slug, doc_type, category, url
-     FROM documents
-     WHERE title LIKE ? OR slug LIKE ? OR url LIKE ?
-     ORDER BY title ASC
-     LIMIT ? OFFSET ?`
-  );
-
   const stmtSearchDocsAll = db.prepare<[number, number], DocSearchResult>(
-    `SELECT id, title, slug, doc_type, category, url
+    `SELECT id, title, slug, doc_type, source, category, url
      FROM documents
      ORDER BY title ASC
      LIMIT ? OFFSET ?`
-  );
-
-  const stmtCountSearch = db.prepare<[string, string, string], { total: number }>(
-    `SELECT COUNT(*) AS total
-     FROM documents
-     WHERE title LIKE ? OR slug LIKE ? OR url LIKE ?`
   );
 
   const stmtCountAll = db.prepare<[], { total: number }>(
@@ -126,9 +120,10 @@ export function buildAdminQueries(db: Database.Database) {
     getStats(): AdminStats {
       const { total } = stmtTotalDocs.get()!;
       const byCategory = stmtByCategory.all();
+      const bySource = stmtBySource.all();
       const lastJob = stmtLastJob.get() ?? null;
       const recentErrors = stmtRecentErrors.all();
-      return { totalDocs: total, byCategory, lastJob, recentErrors };
+      return { totalDocs: total, byCategory, bySource, lastJob, recentErrors };
     },
 
     getJobs(limit = 50): JobRow[] {
@@ -139,20 +134,75 @@ export function buildAdminQueries(db: Database.Database) {
       return stmtCheckpoints.all();
     },
 
-    searchDocs(q: string, limit = 50, offset = 0): DocSearchResult[] {
-      if (!q.trim()) {
+    searchDocs(
+      q: string,
+      limit = 50,
+      offset = 0,
+      filters?: { category?: string; source?: string }
+    ): DocSearchResult[] {
+      const where: string[] = [];
+      const params: Array<string | number> = [];
+
+      if (q.trim()) {
+        const like = `%${q}%`;
+        where.push("(title LIKE ? OR slug LIKE ? OR url LIKE ?)");
+        params.push(like, like, like);
+      }
+      if (filters?.category?.trim()) {
+        where.push("category = ?");
+        params.push(filters.category.trim());
+      }
+      if (filters?.source?.trim()) {
+        where.push("source = ?");
+        params.push(filters.source.trim());
+      }
+
+      if (where.length === 0) {
         return stmtSearchDocsAll.all(limit, offset);
       }
-      const like = `%${q}%`;
-      return stmtSearchDocs.all(like, like, like, limit, offset);
+
+      params.push(limit, offset);
+      const stmt = db.prepare<
+        (string | number)[],
+        DocSearchResult
+      >(
+        `SELECT id, title, slug, doc_type, source, category, url
+         FROM documents
+         WHERE ${where.join(" AND ")}
+         ORDER BY title ASC
+         LIMIT ? OFFSET ?`
+      );
+      return stmt.all(...params);
     },
 
-    countSearchDocs(q: string): number {
-      if (!q.trim()) {
+    countSearchDocs(q: string, filters?: { category?: string; source?: string }): number {
+      const where: string[] = [];
+      const params: string[] = [];
+
+      if (q.trim()) {
+        const like = `%${q}%`;
+        where.push("(title LIKE ? OR slug LIKE ? OR url LIKE ?)");
+        params.push(like, like, like);
+      }
+      if (filters?.category?.trim()) {
+        where.push("category = ?");
+        params.push(filters.category.trim());
+      }
+      if (filters?.source?.trim()) {
+        where.push("source = ?");
+        params.push(filters.source.trim());
+      }
+
+      if (where.length === 0) {
         return stmtCountAll.get()!.total;
       }
-      const like = `%${q}%`;
-      return stmtCountSearch.get(like, like, like)!.total;
+
+      const stmt = db.prepare<string[], { total: number }>(
+        `SELECT COUNT(*) AS total
+         FROM documents
+         WHERE ${where.join(" AND ")}`
+      );
+      return stmt.get(...params)!.total;
     },
 
     deleteAllDocs(): void {

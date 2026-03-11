@@ -3,7 +3,10 @@ export type DocType = "function" | "hook" | "class" | "method" | "guide" | "exam
 export type DocSource =
   | "devhub-api"
   | "gutenberg-github"
-  | "wpcli-github";
+  | "wpcli-github"
+  | "php-manual"
+  | "nodejs-docs"
+  | "mdn-webdocs";
 
 export type DocCategory =
   | "code-reference"
@@ -14,7 +17,10 @@ export type DocCategory =
   | "common-apis"
   | "coding-standards"
   | "admin"
-  | "scf";
+  | "scf"
+  | "php-core"
+  | "nodejs-runtime"
+  | "web-platform";
 
 export interface Document {
   id: number;
@@ -47,6 +53,7 @@ export interface SearchResult {
   url: string;
   title: string;
   doc_type: DocType;
+  source: DocSource;
   category: DocCategory | null;
   slug: string;
   excerpt: string;

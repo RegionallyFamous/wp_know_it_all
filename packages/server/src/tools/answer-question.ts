@@ -26,6 +26,9 @@ export const answerQuestionInputSchema = {
       "coding-standards",
       "admin",
       "scf",
+      "php-core",
+      "nodejs-runtime",
+      "web-platform",
     ])
     .optional()
     .describe("Optional category filter to focus retrieval."),
@@ -49,6 +52,7 @@ function documentToSearchResult(row: DocumentRow): SearchResult {
     url: row.url,
     title: row.title,
     doc_type: row.doc_type,
+    source: row.source,
     category: row.category,
     slug: row.slug,
     excerpt:
@@ -228,7 +232,7 @@ export function registerAnswerQuestionTool(
     "answer_wordpress_question",
     {
       description:
-        "Answer a WordPress question with grounded evidence. Returns structured claims and citations, and abstains when confidence is low.",
+        "Answer a WordPress question with grounded evidence from the WordPress-first corpus (plus adjacent PHP/Node/Web references). Returns structured claims and citations, and abstains when confidence is low.",
       inputSchema: answerQuestionInputSchema,
     },
     async ({ question, category, doc_type, top_k }) => {

@@ -21,6 +21,9 @@ export const searchInputSchema = {
       "coding-standards",
       "admin",
       "scf",
+      "php-core",
+      "nodejs-runtime",
+      "web-platform",
     ])
     .optional()
     .describe("Filter results to a specific documentation section."),
@@ -41,7 +44,7 @@ export function registerSearchTool(
     "search_wordpress_docs",
     {
       description:
-        "Search the WordPress developer documentation corpus (10,000+ pages). Returns BM25-ranked results with excerpts. Supports natural language or exact function/hook names. Use this first to discover, then call get_wordpress_doc for full content.",
+        "Search the WordPress-first documentation corpus with adjacent PHP/Node/Web references. Returns BM25-ranked results with excerpts, while prioritizing WordPress-native sources. Supports natural language or exact function/hook names. Use this first to discover, then call get_wordpress_doc for full content.",
       inputSchema: searchInputSchema,
     },
     async ({ query, category, doc_type, limit }) => {
@@ -113,6 +116,7 @@ function documentToSearchResult(row: DocumentRow): SearchResult {
     url: row.url,
     title: row.title,
     doc_type: row.doc_type,
+    source: row.source,
     category: row.category,
     slug: row.slug,
     excerpt:
@@ -130,7 +134,7 @@ function formatResults(
       (r, i) =>
         `${i + 1}. **${r.title}** (${r.doc_type})\n` +
         `   ID: ${r.id} | Slug: \`${r.slug}\`\n` +
-        `   Category: ${r.category ?? "unknown"}\n` +
+        `   Source: ${r.source} | Category: ${r.category ?? "unknown"}\n` +
         `   URL: ${r.url}\n` +
         `   ${r.excerpt}\n`
     )

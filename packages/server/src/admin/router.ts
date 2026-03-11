@@ -123,8 +123,8 @@ function renderDashboardShell(): string {
   </div>
 </div>
 
-<!-- Two-column layout: categories + recent errors -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+<!-- Three-column layout: categories + sources + recent errors -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
   <!-- Category breakdown -->
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
@@ -132,6 +132,20 @@ function renderDashboardShell(): string {
     <div
       id="category-chart"
       hx-get="/admin/stats?fragment=categories"
+      hx-trigger="load"
+      hx-swap="innerHTML"
+      class="space-y-2"
+    >
+      <div class="text-slate-600 text-sm">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Source breakdown -->
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
+    <h2 class="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-5">Documents by Source</h2>
+    <div
+      id="source-chart"
+      hx-get="/admin/stats?fragment=sources"
       hx-trigger="load"
       hx-swap="innerHTML"
       class="space-y-2"
@@ -182,7 +196,7 @@ function renderStatsFragment(
   ${statCard("Total Documents", stats.totalDocs.toLocaleString(), "sky")}
   ${statCard("Last Run", lastRunTime, "slate")}
   ${statCard("Last Status", jobStatus.charAt(0).toUpperCase() + jobStatus.slice(1), jobStatus === "completed" ? "emerald" : jobStatus === "failed" ? "rose" : "amber")}
-  ${statCard("Categories", stats.byCategory.length.toString(), "violet")}
+  ${statCard("Sources", stats.bySource.length.toString(), "violet")}
 </div>`;
 }
 
@@ -230,6 +244,28 @@ function renderRecentErrors(
   </div>
 </div>`
     )
+    .join("\n");
+}
+
+function renderSourceChart(bySource: Array<{ source: string; count: number }>, total: number): string {
+  if (bySource.length === 0) {
+    return `<p class="text-slate-600 text-sm">No documents yet.</p>`;
+  }
+  const max = bySource[0]?.count ?? 1;
+  return bySource
+    .map(({ source, count }) => {
+      const pct = Math.round((count / max) * 100);
+      const totalPct = total > 0 ? ((count / total) * 100).toFixed(1) : "0";
+      return `<div class="space-y-1">
+  <div class="flex justify-between items-baseline">
+    <span class="text-xs text-slate-300 font-medium">${escapeHtml(source)}</span>
+    <span class="text-xs text-slate-500">${count.toLocaleString()} <span class="text-slate-600">(${totalPct}%)</span></span>
+  </div>
+  <div class="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+    <div class="h-full bg-violet-500 rounded-full transition-all duration-500" style="width:${pct}%"></div>
+  </div>
+</div>`;
+    })
     .join("\n");
 }
 
@@ -282,6 +318,35 @@ function renderJobsFragment(
 // ── Search page ──────────────────────────────────────────────────────────────
 
 function renderSearchPage(): string {
+  const sourceOptions = [
+    { value: "", label: "All sources" },
+    { value: "devhub-api", label: "WordPress DevHub API" },
+    { value: "gutenberg-github", label: "Gutenberg (GitHub)" },
+    { value: "wpcli-github", label: "WP-CLI (GitHub)" },
+    { value: "php-manual", label: "PHP Manual" },
+    { value: "nodejs-docs", label: "Node.js Docs" },
+    { value: "mdn-webdocs", label: "MDN Web Docs" },
+  ];
+  const categoryOptions = [
+    { value: "", label: "All categories" },
+    { value: "code-reference", label: "code-reference" },
+    { value: "plugin-handbook", label: "plugin-handbook" },
+    { value: "theme-handbook", label: "theme-handbook" },
+    { value: "block-editor", label: "block-editor" },
+    { value: "rest-api", label: "rest-api" },
+    { value: "common-apis", label: "common-apis" },
+    { value: "coding-standards", label: "coding-standards" },
+    { value: "admin", label: "admin" },
+    { value: "scf", label: "scf" },
+    { value: "php-core", label: "php-core" },
+    { value: "nodejs-runtime", label: "nodejs-runtime" },
+    { value: "web-platform", label: "web-platform" },
+  ];
+  const renderSelectOptions = (options: Array<{ value: string; label: string }>): string =>
+    options
+      .map((opt) => `<option value="${escapeHtml(opt.value)}">${escapeHtml(opt.label)}</option>`)
+      .join("");
+
   return `
 <div class="mb-8">
   <h1 class="text-2xl font-bold text-slate-100">Search Documents</h1>
@@ -293,17 +358,29 @@ function renderSearchPage(): string {
     hx-get="/admin/search/results"
     hx-target="#search-results"
     hx-push-url="false"
-    hx-trigger="submit, input[name='q'] changed delay:400ms"
-    class="flex gap-3"
+    hx-trigger="submit, input[name='q'] changed delay:400ms, select[name='source'] change, select[name='category'] change"
+    class="grid grid-cols-1 lg:grid-cols-5 gap-3"
   >
     <input
       name="q"
       type="search"
       placeholder="Search by title, slug, or URL…"
       autofocus
-      class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600
+      class="lg:col-span-2 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600
              focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500/50 transition-colors"
     />
+    <select
+      name="source"
+      class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500/50 transition-colors"
+    >
+      ${renderSelectOptions(sourceOptions)}
+    </select>
+    <select
+      name="category"
+      class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500/50 transition-colors"
+    >
+      ${renderSelectOptions(categoryOptions)}
+    </select>
     <button
       type="submit"
       class="bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors"
@@ -325,7 +402,8 @@ function renderSearchPage(): string {
 function renderSearchResults(
   results: ReturnType<ReturnType<typeof buildAdminQueries>["searchDocs"]>,
   total: number,
-  q: string
+  q: string,
+  filters: { source?: string; category?: string }
 ): string {
   if (results.length === 0) {
     return `<div class="text-center py-12 text-slate-500 text-sm">No documents found${q ? ` for "${escapeHtml(q)}"` : ""}.</div>`;
@@ -336,17 +414,21 @@ function renderSearchResults(
     `<span class="font-medium text-slate-200">${escapeHtml(r.title)}</span>`,
     `<span class="font-mono text-xs text-slate-400">${escapeHtml(r.slug)}</span>`,
     escapeHtml(r.doc_type),
+    `<span class="font-mono text-xs text-slate-400">${escapeHtml(r.source)}</span>`,
     r.category ? escapeHtml(r.category) : `<span class="text-slate-600">—</span>`,
     `<a href="${escapeHtml(r.url)}" target="_blank" rel="noreferrer" class="text-sky-400 hover:text-sky-300 text-xs truncate max-w-xs inline-block transition-colors">${escapeHtml(r.url)}</a>`,
   ]);
 
+  const activeFilters = [filters.source ? `source=${filters.source}` : "", filters.category ? `category=${filters.category}` : ""]
+    .filter(Boolean)
+    .join(", ");
   const heading =
     q
-      ? `Showing ${results.length.toLocaleString()} of ${total.toLocaleString()} results for "<strong class="text-slate-200">${escapeHtml(q)}</strong>"`
-      : `${total.toLocaleString()} documents total`;
+      ? `Showing ${results.length.toLocaleString()} of ${total.toLocaleString()} results for "<strong class="text-slate-200">${escapeHtml(q)}</strong>"${activeFilters ? ` (${escapeHtml(activeFilters)})` : ""}`
+      : `${total.toLocaleString()} documents total${activeFilters ? ` (${escapeHtml(activeFilters)})` : ""}`;
 
   return `<div class="mb-4 text-xs text-slate-500">${heading}</div>
-${table(["ID", "Title", "Slug", "Type", "Category", "URL"], rows)}`;
+${table(["ID", "Title", "Slug", "Type", "Source", "Category", "URL"], rows)}`;
 }
 
 // ── Scraper page ─────────────────────────────────────────────────────────────
@@ -506,6 +588,32 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
   const queries = buildAdminQueries(db);
   const searchParamsSchema = z.object({
     q: z.string().trim().max(500).optional().default(""),
+    source: z
+      .enum([
+        "devhub-api",
+        "gutenberg-github",
+        "wpcli-github",
+        "php-manual",
+        "nodejs-docs",
+        "mdn-webdocs",
+      ])
+      .optional(),
+    category: z
+      .enum([
+        "code-reference",
+        "plugin-handbook",
+        "theme-handbook",
+        "block-editor",
+        "rest-api",
+        "common-apis",
+        "coding-standards",
+        "admin",
+        "scf",
+        "php-core",
+        "nodejs-runtime",
+        "web-platform",
+      ])
+      .optional(),
     limit: z.coerce.number().int().min(1).max(200).optional().default(50),
     offset: z.coerce.number().int().min(0).max(100_000).optional().default(0),
   });
@@ -559,6 +667,10 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
       res.send(renderRecentErrors(stats.recentErrors));
       return;
     }
+    if (fragment === "sources") {
+      res.send(renderSourceChart(stats.bySource, stats.totalDocs));
+      return;
+    }
     res.send(renderStatsFragment(stats));
   });
 
@@ -583,6 +695,8 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
   router.get("/search/results", (req: Request, res: Response) => {
     const parsed = searchParamsSchema.safeParse({
       q: req.query["q"],
+      source: req.query["source"],
+      category: req.query["category"],
       limit: req.query["limit"],
       offset: req.query["offset"],
     });
@@ -590,10 +704,10 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
       res.status(400).send("Invalid search query parameters.");
       return;
     }
-    const { q, limit, offset } = parsed.data;
-    const results = queries.searchDocs(q, limit, offset);
-    const total = queries.countSearchDocs(q);
-    res.send(renderSearchResults(results, total, q));
+    const { q, source, category, limit, offset } = parsed.data;
+    const results = queries.searchDocs(q, limit, offset, { source, category });
+    const total = queries.countSearchDocs(q, { source, category });
+    res.send(renderSearchResults(results, total, q, { source, category }));
   });
 
   // ── Scraper ────────────────────────────────────────────────────────────

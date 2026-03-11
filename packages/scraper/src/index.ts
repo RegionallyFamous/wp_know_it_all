@@ -4,9 +4,13 @@ import { openWriterDb, applyScraperSchema, buildWriter } from "./db/writer.js";
 import { ingestDevhubContentType } from "./ingestors/devhub-api.js";
 import { ingestGutenbergDocs } from "./ingestors/gutenberg-docs.js";
 import { ingestWpCliHandbook } from "./ingestors/wpcli-handbook.js";
+import { ingestPhpManual } from "./ingestors/php-manual.js";
+import { ingestNodejsDocs } from "./ingestors/nodejs-docs.js";
+import { ingestMdnWebDocs } from "./ingestors/mdn-webdocs.js";
 import { getCuratedBestPractices } from "./lib/best-practices.js";
 import { JobTracker } from "./lib/job-tracker.js";
 import type { InsertableDocument } from "./db/writer.js";
+import { ADJACENT_SOURCE_ORDER, type AdjacentSourceType } from "./ingestors/adjacent-manifests.js";
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const volumePath = process.env["RAILWAY_VOLUME_MOUNT_PATH"] ?? "./data";
@@ -23,6 +27,17 @@ const skipGithub = process.env["SKIP_GITHUB"] === "1";
 
 // SKIP_CURATED=1 — skip curated best-practice examples
 const skipCurated = process.env["SKIP_CURATED"] === "1";
+
+// SKIP_ADJACENT=1 — skip adjacent ecosystem docs (PHP/Node/MDN)
+const skipAdjacent = process.env["SKIP_ADJACENT"] === "1";
+
+// INGEST_ADJACENT_TYPES=php-manual,nodejs-docs — run subset of adjacent sources
+const adjacentTypeFilter = process.env["INGEST_ADJACENT_TYPES"]
+  ?.split(",")
+  .map((s) => s.trim())
+  .filter((s): s is AdjacentSourceType =>
+    (ADJACENT_SOURCE_ORDER as string[]).includes(s)
+  );
 
 async function main(): Promise<void> {
   console.log(`\n[scraper] WP Know It All — Documentation Scraper`);
@@ -122,9 +137,49 @@ async function main(): Promise<void> {
     summary[typeConfig.type] = { docs: sourceDocs, errors: sourceErrors };
   }
 
-  // ── Phase 2: GitHub sources ─────────────────────────────────────────────────
+  // ── Phase 2: Adjacent ecosystem sources ─────────────────────────────────────
+  if (!skipAdjacent) {
+    const adjacentSources = adjacentTypeFilter
+      ? ADJACENT_SOURCE_ORDER.filter((type) => adjacentTypeFilter.includes(type))
+      : ADJACENT_SOURCE_ORDER;
+    console.log(`\n[scraper] Phase 2: Adjacent docs (${adjacentSources.length} sources)`);
+
+    const ingestorsByType: Record<AdjacentSourceType, () => Promise<InsertableDocument[]>> = {
+      "php-manual": ingestPhpManual,
+      "nodejs-docs": ingestNodejsDocs,
+      "mdn-webdocs": ingestMdnWebDocs,
+    };
+
+    for (const sourceType of adjacentSources) {
+      tracker.startSource(jobId, sourceType);
+      let docsCount = 0;
+      try {
+        const docs = await ingestorsByType[sourceType]();
+        if (docs.length > 0) {
+          writer.insertBatch(docs);
+          totalDocs += docs.length;
+          docsCount = docs.length;
+          console.log(
+            `[scraper] ✓ ${sourceType}: ${docs.length} docs (total: ${writer.count().toLocaleString()})`
+          );
+        }
+        tracker.completeSource(jobId, sourceType, docs.length, 0);
+        summary[sourceType] = { docs: docs.length, errors: 0 };
+      } catch (err) {
+        const msg = String(err);
+        console.error(`[scraper] ✗ ${sourceType} failed: ${msg}`);
+        tracker.logError(jobId, sourceType, null, msg);
+        tracker.failSource(jobId, sourceType, msg);
+        totalErrors++;
+        hasSourceFailures = true;
+        summary[sourceType] = { docs: docsCount, errors: 1 };
+      }
+    }
+  }
+
+  // ── Phase 3: GitHub sources ─────────────────────────────────────────────────
   if (!skipGithub) {
-    console.log("\n[scraper] Phase 2: GitHub sources");
+    console.log("\n[scraper] Phase 3: GitHub sources");
 
     for (const [name, ingest] of [
       ["gutenberg-docs", ingestGutenbergDocs],
@@ -155,9 +210,9 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Phase 3: Curated best practices ─────────────────────────────────────────
+  // ── Phase 4: Curated best practices ─────────────────────────────────────────
   if (!skipCurated) {
-    console.log("\n[scraper] Phase 3: Curated best practices");
+    console.log("\n[scraper] Phase 4: Curated best practices");
     tracker.startSource(jobId, "curated");
 
     try {

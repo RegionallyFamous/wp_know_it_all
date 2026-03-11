@@ -13,6 +13,7 @@ export interface RawSearchResult {
   url: string;
   title: string;
   doc_type: string;
+  source: string;
   category: string | null;
   slug: string;
   excerpt: string;
@@ -26,6 +27,7 @@ export function buildQueries(db: Database.Database) {
       p.url,
       p.title,
       p.doc_type,
+      p.source,
       p.category,
       p.slug,
       snippet(documents_fts, 1, '**', '**', '…', 40) AS excerpt,
@@ -43,6 +45,7 @@ export function buildQueries(db: Database.Database) {
       p.url,
       p.title,
       p.doc_type,
+      p.source,
       p.category,
       p.slug,
       snippet(documents_fts, 1, '**', '**', '…', 40) AS excerpt,
@@ -61,6 +64,7 @@ export function buildQueries(db: Database.Database) {
       p.url,
       p.title,
       p.doc_type,
+      p.source,
       p.category,
       p.slug,
       snippet(documents_fts, 1, '**', '**', '…', 40) AS excerpt,
@@ -79,6 +83,7 @@ export function buildQueries(db: Database.Database) {
       p.url,
       p.title,
       p.doc_type,
+      p.source,
       p.category,
       p.slug,
       snippet(documents_fts, 1, '**', '**', '…', 40) AS excerpt,
@@ -147,6 +152,7 @@ export function buildQueries(db: Database.Database) {
 
       return rows.map((r) => ({
         ...r,
+        source: r.source as SearchResult["source"],
         category: (r.category ?? null) as SearchResult["category"],
         doc_type: r.doc_type as SearchResult["doc_type"],
       }));
