@@ -119,7 +119,7 @@ function renderDashboardShell(): string {
   class="mb-10"
 >
   <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
-    ${[...Array(4)].map(() => `<div class="bg-slate-800 rounded-xl h-28"></div>`).join("")}
+    ${Array.from({ length: 4 }, () => `<div class="bg-slate-800 rounded-xl h-28"></div>`).join("")}
   </div>
 </div>
 

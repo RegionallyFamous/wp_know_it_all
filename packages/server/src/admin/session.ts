@@ -93,6 +93,7 @@ export function requireSameOriginPost(
   }
 
   const firstHeaderValue = (value: string | undefined): string | undefined => {
+    if (!value) return undefined;
     const first = value.split(",")[0]?.trim().replace(/^"+|"+$/g, "");
     return first && first.length > 0 ? first : undefined;
   };
@@ -120,15 +121,16 @@ export function requireSameOriginPost(
     originHost = new URL(originValue).host.toLowerCase();
   } catch {
     // Some proxies/clients may send a host-like value instead of full URL.
-    originHost = originValue
+    const fallbackOriginHost = originValue
       .replace(/^https?:\/\//i, "")
       .split("/")[0]
       ?.trim()
       .toLowerCase();
-    if (!originHost) {
+    if (!fallbackOriginHost) {
       res.status(403).send("Invalid Origin header.");
       return;
     }
+    originHost = fallbackOriginHost;
   }
 
   if (originHost !== host) {

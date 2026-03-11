@@ -8,9 +8,10 @@
     "dev:scraper": "turbo run dev --filter=@wp-know-it-all/scraper",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
+    "lint:strict": "turbo run lint -- --max-warnings=0",
     "test": "turbo run test",
     "format": "prettier --write \"packages/**/src/**/*.ts\"",
-    "ci": "turbo run build typecheck lint test",
+    "ci": "pnpm run build && pnpm run typecheck && pnpm run lint:strict && pnpm run test",
     "backup:db": "./scripts/backup-db.sh",
     "restore:db": "./scripts/restore-db.sh"
   },
