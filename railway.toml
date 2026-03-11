@@ -9,8 +9,10 @@ dockerfilePath = "packages/server/Dockerfile"
 watchPatterns  = [
   "packages/server/src/**",
   "packages/shared/src/**",
+  "packages/scraper/src/**",
   "packages/server/package.json",
   "packages/shared/package.json",
+  "packages/scraper/package.json",
   "packages/server/Dockerfile",
   "railway.toml",
   "pnpm-lock.yaml",

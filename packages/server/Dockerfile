@@ -26,6 +26,8 @@ COPY packages/scraper/ ./packages/scraper/
 RUN pnpm --filter @wp-know-it-all/shared build
 RUN pnpm --filter @wp-know-it-all/server build
 RUN pnpm --filter @wp-know-it-all/scraper build
+RUN test -f /app/packages/server/dist/index.js
+RUN test -f /app/packages/scraper/dist/index.js
 
 # Produce a portable server folder with isolated production node_modules.
 # --legacy avoids requiring inject-workspace-packages in pnpm-workspace.yaml.
@@ -34,6 +36,8 @@ RUN pnpm --filter @wp-know-it-all/scraper --prod deploy --legacy /prod/scraper
 # Ensure native binding exists in deploy bundle even if prebuild download misses.
 RUN cd /prod/server && pnpm rebuild better-sqlite3
 RUN cd /prod/scraper && pnpm rebuild better-sqlite3
+RUN test -f /prod/server/dist/index.js
+RUN test -f /prod/scraper/dist/index.js
 
 # ── Stage 2: Production image ─────────────────────────────────────────────────
 FROM node:22-slim AS production
@@ -51,6 +55,8 @@ RUN addgroup --system --gid 1001 nodejs \
 # Copy deploy bundle to expected service path used by Railway start command
 COPY --from=build --chown=nodejs:nodejs /prod/server ./packages/server
 COPY --from=build --chown=nodejs:nodejs /prod/scraper ./packages/scraper
+RUN test -f /app/packages/server/dist/index.js
+RUN test -f /app/packages/scraper/dist/index.js
 
 # Default local data dir; Railway provides mount path via RAILWAY_VOLUME_MOUNT_PATH
 RUN mkdir -p /app/data /tmp/.cache/node/corepack/v1 \
