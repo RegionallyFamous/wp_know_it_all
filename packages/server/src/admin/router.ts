@@ -142,7 +142,18 @@ function renderDashboardShell(): string {
 
   <!-- Recent scrape errors -->
   <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
-    <h2 class="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-5">Recent Errors</h2>
+    <div class="flex items-center justify-between mb-5">
+      <h2 class="text-sm font-semibold text-slate-200 uppercase tracking-wider">Recent Errors</h2>
+      <button
+        hx-post="/admin/scraper/errors/clear"
+        hx-target="#recent-errors"
+        hx-swap="innerHTML"
+        hx-confirm="Clear all scraper error history?"
+        class="text-xs text-slate-500 hover:text-slate-300 transition-colors px-2 py-1 rounded hover:bg-slate-800"
+      >
+        Clear Errors
+      </button>
+    </div>
     <div
       id="recent-errors"
       hx-get="/admin/stats?fragment=errors"
@@ -364,6 +375,15 @@ function renderScraperPage(): string {
       class="bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-slate-200 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
     >
       Kill
+    </button>
+    <button
+      hx-post="/admin/scraper/errors/clear"
+      hx-target="#scraper-log"
+      hx-swap="none"
+      hx-confirm="Clear all scraper error history?"
+      class="bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-slate-200 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
+    >
+      Clear Errors
     </button>
   </div>
 </div>
@@ -649,6 +669,16 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
     try {
       queries.deleteAllDocs();
       res.redirect("/admin/scraper");
+    } catch (err) {
+      res.status(500).send(String(err));
+    }
+  });
+
+  router.post("/scraper/errors/clear", (_req: Request, res: Response) => {
+    try {
+      queries.deleteScrapeErrors();
+      const stats = queries.getStats();
+      res.send(renderRecentErrors(stats.recentErrors));
     } catch (err) {
       res.status(500).send(String(err));
     }

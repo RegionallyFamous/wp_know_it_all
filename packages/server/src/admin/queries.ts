@@ -120,6 +120,7 @@ export function buildAdminQueries(db: Database.Database) {
   const stmtCountAll = db.prepare<[], { total: number }>(
     `SELECT COUNT(*) AS total FROM documents`
   );
+  const stmtDeleteScrapeErrors = db.prepare(`DELETE FROM scrape_errors`);
 
   return {
     getStats(): AdminStats {
@@ -160,6 +161,11 @@ export function buildAdminQueries(db: Database.Database) {
       db.exec(`INSERT INTO documents_fts(documents_fts) VALUES('rebuild')`);
       // Reset checkpoints
       db.exec(`DELETE FROM scrape_checkpoints`);
+    },
+
+    deleteScrapeErrors(): number {
+      const result = stmtDeleteScrapeErrors.run();
+      return result.changes;
     },
 
     rebuildFts(): void {
