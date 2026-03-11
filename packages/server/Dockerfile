@@ -40,11 +40,10 @@ RUN pnpm --filter @wp-know-it-all/server build
 FROM node:22-slim AS production
 
 ENV NODE_ENV=production
+ENV HOME=/tmp
+ENV XDG_CACHE_HOME=/tmp/.cache
 
 WORKDIR /app
-
-# Ensure pnpm exists if Railway start command is overridden to pnpm
-RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
 # Non-root user
 RUN addgroup --system --gid 1001 nodejs \
@@ -59,7 +58,8 @@ COPY --chown=nodejs:nodejs packages/shared/package.json                      ./p
 COPY --chown=nodejs:nodejs packages/server/package.json                      ./packages/server/
 
 # Default local data dir; Railway provides mount path via RAILWAY_VOLUME_MOUNT_PATH
-RUN mkdir -p /app/data && chown nodejs:nodejs /app/data
+RUN mkdir -p /app/data /tmp/.cache/node/corepack/v1 \
+ && chown -R nodejs:nodejs /app/data /tmp/.cache
 
 USER nodejs
 

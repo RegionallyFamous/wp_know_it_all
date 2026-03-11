@@ -24,11 +24,10 @@ RUN pnpm --filter @wp-know-it-all/scraper build
 FROM node:22-slim AS production
 
 ENV NODE_ENV=production
+ENV HOME=/tmp
+ENV XDG_CACHE_HOME=/tmp/.cache
 
 WORKDIR /app
-
-# Ensure pnpm exists if Railway start command is overridden to pnpm
-RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
 # git is required for simple-git (GitHub clone)
 RUN apt-get update \
@@ -47,7 +46,7 @@ COPY packages/shared/package.json                      ./packages/shared/
 COPY packages/scraper/package.json                     ./packages/scraper/
 
 # Scraper writes to the Railway volume — default fallback for local testing
-RUN mkdir -p /data
+RUN mkdir -p /data /tmp/.cache/node/corepack/v1
 
 # MUST exit 0 after completion (Railway cron requirement)
 CMD ["node", "packages/scraper/dist/index.js"]

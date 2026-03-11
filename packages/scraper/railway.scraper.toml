@@ -14,6 +14,7 @@ watchPatterns  = [
 ]
 
 [deploy]
+startCommand         = "node packages/scraper/dist/index.js"
 # Weekly Sunday at 3:00 AM UTC
 cronSchedule         = "0 3 * * 0"
 restartPolicyType    = "NEVER"
