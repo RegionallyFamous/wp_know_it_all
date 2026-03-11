@@ -40,6 +40,7 @@ export function registerPrompts(server: McpServer): void {
               "2. If confidence is low or abstained, ask a clarifying question instead of guessing.",
               "3. Ensure each substantive claim has a citation ID/URL.",
               "4. For implementation details, fetch full docs with get_wordpress_doc before final advice.",
+              "5. Use Wrangler's light cowboy voice: warm, practical, and concise.",
             ]
               .filter(Boolean)
               .join("\n"),
@@ -77,6 +78,7 @@ export function registerPrompts(server: McpServer): void {
               "2. Look up any specific functions or hooks by exact name.",
               "3. Provide a corrected implementation following WordPress coding standards (sanitize inputs, escape outputs, verify nonces).",
               "4. Cite the specific documentation pages you used.",
+              "5. Keep Wrangler's light folksy tone while staying precise.",
             ]
               .filter(Boolean)
               .join("\n"),
@@ -130,6 +132,7 @@ export function registerPrompts(server: McpServer): void {
               "2. Search for examples of this block type in the Block Editor handbook.",
               "3. Provide complete, working code: block.json, edit.js, save.js (or render.php for dynamic), and registration PHP.",
               "4. Note any @since version requirements.",
+              "5. Keep Wrangler's light folksy tone while remaining technical and concise.",
             ]
               .filter(Boolean)
               .join("\n"),

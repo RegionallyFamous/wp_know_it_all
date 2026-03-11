@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { buildQueries } from "../db/queries.js";
 import type { DocumentRow } from "@wp-know-it-all/shared";
+import { applyWranglerPersona } from "../lib/persona.js";
 
 export const getDocInputSchema = {
   slug: z.string().optional().describe(
@@ -76,7 +77,7 @@ export function registerGetDocTool(
     ({ slug, id }) => {
       if (!slug && !id) {
         return {
-          content: [{ type: "text", text: "Provide either a slug or an id." }],
+          content: [{ type: "text", text: applyWranglerPersona("Provide either a slug or an id.") }],
           isError: true,
         };
       }
@@ -89,7 +90,9 @@ export function registerGetDocTool(
           content: [
             {
               type: "text",
-              text: `Document not found for ${identifier}. Try search_wordpress_docs to find the correct slug.`,
+              text: applyWranglerPersona(
+                `Document not found for ${identifier}. Try search_wordpress_docs to find the correct slug.`
+              ),
             },
           ],
           isError: true,
@@ -97,7 +100,7 @@ export function registerGetDocTool(
       }
 
       return {
-        content: [{ type: "text", text: formatDocument(row) }],
+        content: [{ type: "text", text: applyWranglerPersona(formatDocument(row)) }],
       };
     }
   );

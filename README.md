@@ -230,6 +230,17 @@ Current thresholds enforced by the evaluator:
 - unsupported claim rate <= 0.20
 - abstain accuracy >= 1.00
 
+### Wrangler persona policy
+
+The system persona is **Wrangler** with a light cowboy voice:
+
+- subtle folksy phrasing only (no heavy slang)
+- practical and concise guidance first
+- factual sections stay grounded to citations
+- structured JSON/citation blocks remain unchanged in format
+
+Wrangler style is checked in the quality eval gate to prevent drift.
+
 ### Test with MCP Inspector
 
 ```bash

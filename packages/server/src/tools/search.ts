@@ -5,6 +5,7 @@ import type { buildQueries } from "../db/queries.js";
 import { expandQuery } from "../lib/query-expansion.js";
 import { routeQuery } from "../lib/query-router.js";
 import { rerankCandidates, type RetrievalCandidate } from "../lib/rerank.js";
+import { applyWranglerPersona } from "../lib/persona.js";
 
 export const searchInputSchema = {
   query: z.string().min(1).max(500).describe(
@@ -98,7 +99,9 @@ export function registerSearchTool(
           content: [
             {
               type: "text" as const,
-              text: `No results found for "${query}". Try a broader query or remove filters.`,
+              text: applyWranglerPersona(
+                `No results found for "${query}". Try a broader query or remove filters.`
+              ),
             },
           ],
         };
@@ -144,10 +147,11 @@ function formatResults(
     content: [
       {
         type: "text" as const,
-        text:
+        text: applyWranglerPersona(
           `Found ${results.length} result(s) for "${query}":\n\n${formatted}\n\n` +
-          `Use \`get_wordpress_doc\` with a slug or ID to fetch full content. ` +
-          `Use \`validate_wordpress_code\` to check your implementation for security issues.`,
+            `Use \`get_wordpress_doc\` with a slug or ID to fetch full content. ` +
+            `Use \`validate_wordpress_code\` to check your implementation for security issues.`
+        ),
       },
     ],
   };

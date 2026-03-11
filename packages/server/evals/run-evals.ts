@@ -4,8 +4,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applySchema } from "../src/db/schema.js";
 import { buildQueries } from "../src/db/queries.js";
-import { buildGroundedAnswer } from "../src/tools/answer-question.js";
+import { buildGroundedAnswer, formatGroundedAnswerOutput } from "../src/tools/answer-question.js";
 import { verifyGroundedAnswer } from "../src/lib/answer-verifier.js";
+import { hasWranglerStyle } from "../src/lib/persona.js";
 
 interface EvalCase {
   question: string;
@@ -18,6 +19,7 @@ interface EvalResult {
   citationPrecision: number;
   unsupportedClaimRate: number;
   abstainCorrect: number;
+  styleConformance: number;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +31,7 @@ const THRESHOLDS = {
   citationPrecision: 0.6,
   unsupportedClaimRateMax: 0.2,
   abstainAccuracy: 1.0,
+  styleConformance: 1.0,
 };
 
 function parseGoldenSet(): EvalCase[] {
@@ -193,12 +196,15 @@ async function main(): Promise<void> {
       expectedSet.size === 0 && citations.length === 0 ? 1 : citationsInExpected;
 
     const abstainCorrect = answerResult.answer.abstained === testCase.shouldAbstain ? 1 : 0;
+    const rendered = formatGroundedAnswerOutput(answerResult.answer, verification);
+    const styleConformance = hasWranglerStyle(rendered) ? 1 : 0;
 
     results.push({
       hitAtK,
       citationPrecision,
       unsupportedClaimRate: verification.unsupportedClaimRate,
       abstainCorrect,
+      styleConformance,
     });
   }
 
@@ -207,6 +213,7 @@ async function main(): Promise<void> {
     citationPrecision: average(results.map((r) => r.citationPrecision)),
     unsupportedClaimRate: average(results.map((r) => r.unsupportedClaimRate)),
     abstainAccuracy: average(results.map((r) => r.abstainCorrect)),
+    styleConformance: average(results.map((r) => r.styleConformance)),
   };
 
   console.log("[eval] Metrics:", JSON.stringify(metrics, null, 2));
@@ -230,6 +237,11 @@ async function main(): Promise<void> {
   if (metrics.abstainAccuracy < THRESHOLDS.abstainAccuracy) {
     failures.push(
       `abstain accuracy ${metrics.abstainAccuracy.toFixed(2)} below threshold ${THRESHOLDS.abstainAccuracy.toFixed(2)}`
+    );
+  }
+  if (metrics.styleConformance < THRESHOLDS.styleConformance) {
+    failures.push(
+      `style conformance ${metrics.styleConformance.toFixed(2)} below threshold ${THRESHOLDS.styleConformance.toFixed(2)}`
     );
   }
 

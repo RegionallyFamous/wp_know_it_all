@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { validateWordPressCode } from "../validation/engine.js";
 import type { ValidationIssue } from "../validation/types.js";
+import { applyWranglerPersona } from "../lib/persona.js";
 
 export function registerValidateTool(server: McpServer): void {
   server.registerTool(
@@ -31,12 +32,14 @@ export function registerValidateTool(server: McpServer): void {
           content: [
             {
               type: "text" as const,
-              text: [
-                `## Validation Score: 100/100 — All checks passed`,
-                "",
-                "This code follows WordPress security standards and coding practices.",
-                "No issues detected across 30 security, standards, and best-practice rules.",
-              ].join("\n"),
+              text: applyWranglerPersona(
+                [
+                  `## Validation Score: 100/100 — All checks passed`,
+                  "",
+                  "This code follows WordPress security standards and coding practices.",
+                  "No issues detected across 30 security, standards, and best-practice rules.",
+                ].join("\n")
+              ),
             },
           ],
         };
@@ -75,7 +78,7 @@ export function registerValidateTool(server: McpServer): void {
         parts.push(...infos.map((i) => formatIssue(i, "ℹ️")));
       }
 
-      return { content: [{ type: "text" as const, text: parts.join("\n") }] };
+      return { content: [{ type: "text" as const, text: applyWranglerPersona(parts.join("\n")) }] };
     }
   );
 }

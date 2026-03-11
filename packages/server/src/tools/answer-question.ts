@@ -8,6 +8,7 @@ import { expandQuery } from "../lib/query-expansion.js";
 import { GroundedAnswerSchema, type GroundedAnswer } from "../lib/answer-schema.js";
 import { verifyGroundedAnswer } from "../lib/answer-verifier.js";
 import { logQualityEvent } from "../lib/quality-metrics.js";
+import { applyWranglerPersona } from "../lib/persona.js";
 
 export const answerQuestionInputSchema = {
   question: z
@@ -186,7 +187,7 @@ export async function buildGroundedAnswer(
   };
 }
 
-function formatGroundedAnswerOutput(
+export function formatGroundedAnswerOutput(
   answer: GroundedAnswer,
   verification: ReturnType<typeof verifyGroundedAnswer>
 ): string {
@@ -209,7 +210,7 @@ function formatGroundedAnswerOutput(
       ? `\n## Verification Warnings\n${verification.reasons.map((r) => `- ${r}`).join("\n")}\n`
       : "";
 
-  return [
+  const body = [
     "## Grounded Answer",
     answer.answer,
     "",
@@ -222,6 +223,7 @@ function formatGroundedAnswerOutput(
     citationLines,
     warnings,
   ].join("\n");
+  return applyWranglerPersona(body);
 }
 
 export function registerAnswerQuestionTool(

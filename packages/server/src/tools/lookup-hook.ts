@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { buildQueries } from "../db/queries.js";
 import type { DocumentRow } from "@wp-know-it-all/shared";
 import { HOOK_SECURITY_CHECKLISTS } from "../validation/rules/hook-checklists.js";
+import { applyWranglerPersona } from "../lib/persona.js";
 
 export const lookupInputSchema = {
   name: z.string().min(1).max(200).describe(
@@ -153,7 +154,9 @@ export function registerLookupTool(
             content: [
               {
                 type: "text" as const,
-                text: `No exact match for \`${name}\`. Did you mean one of these?\n\n${suggestions}\n\nUse \`get_wordpress_doc\` with the slug to fetch the full page.`,
+                text: applyWranglerPersona(
+                  `No exact match for \`${name}\`. Did you mean one of these?\n\n${suggestions}\n\nUse \`get_wordpress_doc\` with the slug to fetch the full page.`
+                ),
               },
             ],
           };
@@ -162,7 +165,9 @@ export function registerLookupTool(
           content: [
             {
               type: "text" as const,
-              text: `No documentation found for \`${name}\`. Check the spelling or use \`search_wordpress_docs\` with a descriptive query.`,
+              text: applyWranglerPersona(
+                `No documentation found for \`${name}\`. Check the spelling or use \`search_wordpress_docs\` with a descriptive query.`
+              ),
             },
           ],
         };
@@ -170,7 +175,7 @@ export function registerLookupTool(
 
       const related = queries.getRelated(row.slug, row.id);
       return {
-        content: [{ type: "text" as const, text: formatLookup(row, related) }],
+        content: [{ type: "text" as const, text: applyWranglerPersona(formatLookup(row, related)) }],
       };
     }
   );
