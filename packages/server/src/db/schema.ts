@@ -12,6 +12,7 @@ export function openDatabase(dbPath: string): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
   db.pragma("cache_size = -32000"); // 32MB cache
 
   applySchema(db);
@@ -40,9 +41,11 @@ export function applySchema(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_documents_slug     ON documents(slug);
+    CREATE INDEX IF NOT EXISTS idx_documents_slug_lower ON documents(LOWER(slug));
     CREATE INDEX IF NOT EXISTS idx_documents_doc_type ON documents(doc_type);
     CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
     CREATE INDEX IF NOT EXISTS idx_documents_source   ON documents(source);
+    CREATE INDEX IF NOT EXISTS idx_documents_title_lower ON documents(LOWER(title));
 
     CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
       title,
@@ -99,6 +102,7 @@ export function applySchema(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_scrape_errors_job ON scrape_errors(job_id);
+    CREATE INDEX IF NOT EXISTS idx_scrape_errors_created_at ON scrape_errors(created_at DESC);
   `);
 }
 

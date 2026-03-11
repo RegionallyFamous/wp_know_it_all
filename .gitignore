@@ -18,6 +18,7 @@ packages/*/.env.*.local
 
 # Runtime data
 data/
+backups/
 
 # Logs
 *.log

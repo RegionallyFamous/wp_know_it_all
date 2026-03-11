@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import cookieParser from "cookie-parser";
+import { z } from "zod";
 import type Database from "better-sqlite3";
 import {
   createSession,
@@ -10,6 +11,7 @@ import {
   setSessionCookie,
   clearSessionCookie,
   requireAdminAuth,
+  requireSameOriginPost,
   verifyAdminPassword,
 } from "./session.js";
 import { scraperRunner } from "./runner.js";
@@ -481,9 +483,15 @@ function renderLogOutput(lines: import("./runner.js").LogLine[]): string {
 export function createAdminRouter(db: Database.Database): ReturnType<typeof Router> {
   const router = Router();
   const queries = buildAdminQueries(db);
+  const searchParamsSchema = z.object({
+    q: z.string().trim().max(500).optional().default(""),
+    limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+    offset: z.coerce.number().int().min(0).max(100_000).optional().default(0),
+  });
 
   // Cookie parser (scoped to admin router)
   router.use(cookieParser());
+  router.use(requireSameOriginPost);
 
   // ── Auth ─────────────────────────────────────────────────────────────────
 
@@ -552,9 +560,16 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
   });
 
   router.get("/search/results", (req: Request, res: Response) => {
-    const q = ((req.query["q"] as string) ?? "").trim();
-    const limit = Math.min(parseInt((req.query["limit"] as string) ?? "50", 10), 200);
-    const offset = parseInt((req.query["offset"] as string) ?? "0", 10);
+    const parsed = searchParamsSchema.safeParse({
+      q: req.query["q"],
+      limit: req.query["limit"],
+      offset: req.query["offset"],
+    });
+    if (!parsed.success) {
+      res.status(400).send("Invalid search query parameters.");
+      return;
+    }
+    const { q, limit, offset } = parsed.data;
     const results = queries.searchDocs(q, limit, offset);
     const total = queries.countSearchDocs(q);
     res.send(renderSearchResults(results, total, q));

@@ -11,7 +11,10 @@
 
 const OLLAMA_HOST = process.env["OLLAMA_HOST"];
 const OLLAMA_MODEL = process.env["OLLAMA_MODEL"] ?? "qwen2.5-coder:1.5b";
-const EXPAND_TIMEOUT_MS = 3000;
+const EXPAND_TIMEOUT_MS = parseInt(process.env["OLLAMA_EXPAND_TIMEOUT_MS"] ?? "250", 10);
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_MAX_ENTRIES = 500;
+const expansionCache = new Map<string, { value: string; expiresAt: number }>();
 
 const EXPAND_PROMPT = `You are a WordPress developer search assistant. 
 Given a search query, output 3-5 alternative search terms or synonyms a developer might use to find the same information. 
@@ -25,6 +28,15 @@ Query: `;
  */
 export async function expandQuery(query: string): Promise<string> {
   if (!OLLAMA_HOST) return query;
+  const now = Date.now();
+  const cached = expansionCache.get(query);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  if (cached && cached.expiresAt <= now) {
+    expansionCache.delete(query);
+  }
 
   try {
     const controller = new AbortController();
@@ -54,6 +66,11 @@ export async function expandQuery(query: string): Promise<string> {
     // Combine original query with expansions for a richer FTS search
     const terms = expansion.split(",").map((t) => t.trim()).filter(Boolean);
     const combined = [query, ...terms.slice(0, 3)].join(" ");
+    if (expansionCache.size >= CACHE_MAX_ENTRIES) {
+      const firstKey = expansionCache.keys().next().value;
+      if (firstKey) expansionCache.delete(firstKey);
+    }
+    expansionCache.set(query, { value: combined, expiresAt: now + CACHE_TTL_MS });
     return combined;
   } catch {
     // Silently fall back — Ollama is optional

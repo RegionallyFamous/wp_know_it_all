@@ -66,8 +66,7 @@ export function requireAdminAuth(
 
 export function verifyAdminPassword(password: string): boolean {
   const envPassword = process.env["ADMIN_PASSWORD"];
-  // Open in dev if no password configured
-  if (!envPassword) return true;
+  if (!envPassword) return false;
 
   const expected = createHash("sha256").update(envPassword).digest();
   const actual = createHash("sha256").update(password).digest();
@@ -77,4 +76,46 @@ export function verifyAdminPassword(password: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function isAdminPasswordConfigured(): boolean {
+  return Boolean(process.env["ADMIN_PASSWORD"]?.trim());
+}
+
+export function requireSameOriginPost(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  if (req.method !== "POST" && req.method !== "PUT" && req.method !== "PATCH" && req.method !== "DELETE") {
+    next();
+    return;
+  }
+
+  const origin = req.headers.origin;
+  if (!origin) {
+    res.status(403).send("Missing Origin header.");
+    return;
+  }
+
+  const host = req.headers.host;
+  if (!host) {
+    res.status(403).send("Missing Host header.");
+    return;
+  }
+
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    res.status(403).send("Invalid Origin header.");
+    return;
+  }
+
+  if (originHost !== host) {
+    res.status(403).send("Cross-origin request blocked.");
+    return;
+  }
+
+  next();
 }

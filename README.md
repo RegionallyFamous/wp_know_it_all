@@ -97,7 +97,12 @@ Set these environment variables in the Railway dashboard:
 | Variable | Value |
 |---|---|
 | `MCP_AUTH_TOKEN` | A strong random secret (e.g. `openssl rand -hex 32`) |
+| `ADMIN_PASSWORD` | Required in production to enable admin sign-in |
+| `ALLOWED_HOSTS` | Comma-separated host allowlist for DNS-rebinding protection (e.g. `your-service.up.railway.app`) |
 | `SCRAPER_ENTRY` (optional) | Absolute path to scraper entrypoint. Default auto-resolves to `/app/packages/scraper/dist/index.js` |
+| `OLLAMA_HOST` (optional) | Ollama endpoint used for query expansion |
+| `OLLAMA_MODEL` (optional) | Query expansion model (default `qwen2.5-coder:1.5b`) |
+| `OLLAMA_EXPAND_TIMEOUT_MS` (optional) | Ollama query-expansion time budget in ms (default `250`) |
 
 ### 3. Attach a persistent volume
 
@@ -136,6 +141,15 @@ SCRAPER_ENTRY=/app/packages/scraper/dist/index.js
 
 The server now checks common paths automatically and logs checked candidates in `scraper.log` if the entrypoint is missing.
 
+### Health and readiness endpoints
+
+- `GET /livez` — liveness probe
+- `GET /readyz` — readiness probe (DB + volume write access)
+- `GET /startupz` — startup probe
+- `GET /health` — compatibility endpoint backed by readiness
+
+Set Railway healthcheck to `/readyz` (already configured in `railway.toml`).
+
 ---
 
 ## Local Development
@@ -168,8 +182,29 @@ Create `packages/server/.env`:
 
 ```env
 MCP_AUTH_TOKEN=your-local-dev-token
+ADMIN_PASSWORD=your-local-admin-password
+ALLOWED_HOSTS=localhost:3000
 # RAILWAY_VOLUME_MOUNT_PATH defaults to ./data when not set
 ```
+
+### Backup and restore
+
+Use the included scripts to snapshot and restore SQLite data:
+
+```bash
+# Create backup under ./backups
+pnpm backup:db
+
+# Restore backup file into current DB path
+pnpm restore:db ./backups/wordpress-YYYYMMDD-HHMMSS.db
+```
+
+### CI and security workflows
+
+GitHub Actions includes:
+
+- `.github/workflows/ci.yml` — build, typecheck, lint, and test on PR/push
+- `.github/workflows/security.yml` — weekly dependency audit
 
 ### Test with MCP Inspector
 

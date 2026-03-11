@@ -10,7 +10,12 @@ dockerfilePath = "packages/scraper/Dockerfile.scraper"
 watchPatterns  = [
   "packages/scraper/src/**",
   "packages/shared/src/**",
-  "packages/scraper/Dockerfile.scraper"
+  "packages/scraper/package.json",
+  "packages/shared/package.json",
+  "packages/scraper/Dockerfile.scraper",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "package.json"
 ]
 
 [deploy]

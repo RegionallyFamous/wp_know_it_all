@@ -6,6 +6,7 @@ import { ingestGutenbergDocs } from "./ingestors/gutenberg-docs.js";
 import { ingestWpCliHandbook } from "./ingestors/wpcli-handbook.js";
 import { getCuratedBestPractices } from "./lib/best-practices.js";
 import { JobTracker } from "./lib/job-tracker.js";
+import type { InsertableDocument } from "./db/writer.js";
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const volumePath = process.env["RAILWAY_VOLUME_MOUNT_PATH"] ?? "./data";
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
   const summary: Record<string, { docs: number; errors: number }> = {};
   let totalDocs = 0;
   let totalErrors = 0;
+  let hasSourceFailures = false;
 
   // ── Phase 1: DevHub REST API ────────────────────────────────────────────────
   const contentTypes = typeFilter
@@ -75,13 +77,15 @@ async function main(): Promise<void> {
     let sourceErrors = 0;
 
     try {
-      const docs = await ingestDevhubContentType(typeConfig, {
+      const result = await ingestDevhubContentType(typeConfig, {
         modifiedAfter,
         startPage,
         onPageComplete: (page, _total, _fetched) => {
           tracker.saveCheckpoint(typeConfig.type, page);
         },
       });
+      const docs = result.documents;
+      const failedPages = result.failedPages;
 
       if (docs.length > 0) {
         writer.insertBatch(docs);
@@ -92,7 +96,17 @@ async function main(): Promise<void> {
         );
       }
 
-      tracker.completeSource(jobId, typeConfig.type, sourceDocs, sourceErrors);
+      if (failedPages.length > 0) {
+        hasSourceFailures = true;
+        sourceErrors += failedPages.length;
+        totalErrors += failedPages.length;
+        const errorMsg = `Failed pages: ${failedPages.join(", ")}`;
+        tracker.logError(jobId, typeConfig.type, null, errorMsg);
+        tracker.failSource(jobId, typeConfig.type, errorMsg);
+        console.warn(`[scraper] ✗ ${typeConfig.type}: ${errorMsg}`);
+      } else {
+        tracker.completeSource(jobId, typeConfig.type, sourceDocs, sourceErrors);
+      }
     } catch (err) {
       const msg = String(err);
       console.error(`[scraper] ✗ ${typeConfig.type} failed: ${msg}`);
@@ -100,6 +114,7 @@ async function main(): Promise<void> {
       tracker.failSource(jobId, typeConfig.type, msg);
       sourceErrors++;
       totalErrors++;
+      hasSourceFailures = true;
     }
 
     summary[typeConfig.type] = { docs: sourceDocs, errors: sourceErrors };
@@ -112,7 +127,7 @@ async function main(): Promise<void> {
     for (const [name, ingest] of [
       ["gutenberg-docs", ingestGutenbergDocs],
       ["wpcli-handbook", ingestWpCliHandbook],
-    ] as [string, () => Promise<import("./db/writer.js").InsertableDocument[]>][]) {
+    ] as [string, () => Promise<InsertableDocument[]>][]) {
       tracker.startSource(jobId, name);
 
       try {
@@ -132,6 +147,7 @@ async function main(): Promise<void> {
         tracker.logError(jobId, name, null, msg);
         tracker.failSource(jobId, name, msg);
         totalErrors++;
+        hasSourceFailures = true;
         summary[name] = { docs: 0, errors: 1 };
       }
     }
@@ -155,12 +171,18 @@ async function main(): Promise<void> {
       tracker.logError(jobId, "curated", null, msg);
       tracker.failSource(jobId, "curated", msg);
       totalErrors++;
+      hasSourceFailures = true;
     }
   }
 
   // ── Finalize ─────────────────────────────────────────────────────────────────
   const finalCount = writer.count();
-  tracker.completeJob(jobId, { summary, totalDocs, totalErrors, finalCount });
+  const summaryPayload = { summary, totalDocs, totalErrors, finalCount };
+  if (hasSourceFailures) {
+    tracker.failJob(jobId, summaryPayload);
+  } else {
+    tracker.completeJob(jobId, summaryPayload);
+  }
 
   console.log(`\n[scraper] ══════════════════════════════════`);
   console.log(`[scraper] Run complete at: ${new Date().toISOString()}`);
@@ -170,7 +192,7 @@ async function main(): Promise<void> {
   console.log(`[scraper] ══════════════════════════════════\n`);
 
   db.close();
-  process.exit(0);
+  process.exit(hasSourceFailures ? 1 : 0);
 }
 
 main().catch((err) => {

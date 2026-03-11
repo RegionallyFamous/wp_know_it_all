@@ -43,12 +43,18 @@ export interface FetchOptions {
   onPageComplete?: (page: number, totalPages: number, fetchedCount: number) => void;
 }
 
+interface FetchAllResult {
+  pages: DevHubPage[];
+  failedPages: number[];
+}
+
 async function fetchAllOfType(
   contentType: string,
   opts: FetchOptions = {}
-): Promise<DevHubPage[]> {
+): Promise<FetchAllResult> {
   const { modifiedAfter, startPage = 1, onPageComplete } = opts;
   const all: DevHubPage[] = [];
+  const failedPages: number[] = [];
   let page = startPage;
   let totalPages = 1;
 
@@ -71,8 +77,10 @@ async function fetchAllOfType(
     try {
       res = await withRetry(() => fetchPage(url), 4, 2000, `devhub:${contentType}:p${page}`);
     } catch (err) {
-      console.warn(`[devhub] Giving up on ${contentType} page ${page}: ${String(err)}`);
-      break;
+      console.warn(`[devhub] Failed ${contentType} page ${page}, continuing: ${String(err)}`);
+      failedPages.push(page);
+      page++;
+      continue;
     }
 
     const data = (await res.json()) as DevHubPage[];
@@ -89,7 +97,7 @@ async function fetchAllOfType(
     if (page <= totalPages) await sleep(REQUEST_DELAY_MS);
   }
 
-  return all;
+  return { pages: all, failedPages };
 }
 
 function slugifyTitle(title: string): string {
@@ -137,16 +145,23 @@ function pageToDocument(
   };
 }
 
+export interface IngestDevhubResult {
+  documents: InsertableDocument[];
+  failedPages: number[];
+}
+
 export async function ingestDevhubContentType(
   typeConfig: (typeof DEVHUB_CONTENT_TYPES)[number],
   opts: FetchOptions = {}
-): Promise<InsertableDocument[]> {
+): Promise<IngestDevhubResult> {
   const { type, category, docType } = typeConfig;
   const mode = opts.modifiedAfter ? `incremental (after ${opts.modifiedAfter})` : "full";
   console.log(`\n[devhub] Starting ${mode} ingest: ${type}`);
 
-  const pages = await fetchAllOfType(type, opts);
-  console.log(`[devhub] ${type}: fetched ${pages.length} pages, converting...`);
+  const { pages, failedPages } = await fetchAllOfType(type, opts);
+  console.log(
+    `[devhub] ${type}: fetched ${pages.length} pages${failedPages.length > 0 ? ` (${failedPages.length} failed)` : ""}, converting...`
+  );
 
   const documents: InsertableDocument[] = [];
 
@@ -156,5 +171,5 @@ export async function ingestDevhubContentType(
   }
 
   console.log(`[devhub] ${type}: ${documents.length} documents processed`);
-  return documents;
+  return { documents, failedPages };
 }

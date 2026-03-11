@@ -42,6 +42,7 @@ export function registerSearchTool(
       inputSchema: searchInputSchema,
     },
     async ({ query, category, doc_type, limit }) => {
+      const startedAt = Date.now();
       // Optionally expand query via Ollama (no-op if OLLAMA_HOST not set)
       const expandedQuery = await expandQuery(query);
 
@@ -63,9 +64,13 @@ export function registerSearchTool(
           };
         }
 
+        const elapsedMs = Date.now() - startedAt;
+        console.log(`[perf] search_wordpress_docs fallback completed in ${elapsedMs}ms`);
         return formatResults(query, fallbackResults);
       }
 
+      const elapsedMs = Date.now() - startedAt;
+      console.log(`[perf] search_wordpress_docs completed in ${elapsedMs}ms`);
       return formatResults(query, results);
     }
   );

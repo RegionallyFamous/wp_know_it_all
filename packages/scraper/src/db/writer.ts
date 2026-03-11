@@ -29,6 +29,7 @@ export function openWriterDb(dbPath: string): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");
+  db.pragma("busy_timeout = 5000");
   db.pragma("cache_size = -64000");
 
   return db;
@@ -56,8 +57,10 @@ export function applyScraperSchema(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_documents_slug     ON documents(slug);
+    CREATE INDEX IF NOT EXISTS idx_documents_slug_lower ON documents(LOWER(slug));
     CREATE INDEX IF NOT EXISTS idx_documents_doc_type ON documents(doc_type);
     CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
+    CREATE INDEX IF NOT EXISTS idx_documents_title_lower ON documents(LOWER(title));
 
     CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
       title,
@@ -113,6 +116,7 @@ export function applyScraperSchema(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_scrape_errors_job ON scrape_errors(job_id);
+    CREATE INDEX IF NOT EXISTS idx_scrape_errors_created_at ON scrape_errors(created_at DESC);
   `);
 }
 
@@ -161,17 +165,34 @@ export function buildWriter(db: Database.Database) {
     }
   });
 
+  function runWithBusyRetry<T>(fn: () => T, maxAttempts = 5): T {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return fn();
+      } catch (error) {
+        lastError = error;
+        const message = String(error);
+        const isBusy = message.includes("SQLITE_BUSY") || message.includes("database is locked");
+        if (!isBusy || attempt === maxAttempts) {
+          throw error;
+        }
+      }
+    }
+    throw lastError;
+  }
+
   const countStmt = db.prepare<[], { count: number }>(
     "SELECT COUNT(*) as count FROM documents"
   );
 
   return {
     insertBatch(docs: InsertableDocument[]): void {
-      batchInsert(docs);
+      runWithBusyRetry(() => batchInsert(docs));
     },
 
     insert(doc: InsertableDocument): void {
-      batchInsert([doc]);
+      runWithBusyRetry(() => batchInsert([doc]));
     },
 
     count(): number {

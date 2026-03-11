@@ -12,12 +12,15 @@ watchPatterns  = [
   "packages/server/package.json",
   "packages/shared/package.json",
   "packages/server/Dockerfile",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "package.json",
   "tsconfig.base.json"
 ]
 
 [deploy]
 startCommand            = "node packages/server/dist/index.js"
-healthcheckPath         = "/health"
+healthcheckPath         = "/readyz"
 healthcheckTimeout      = 120
 restartPolicyType       = "ON_FAILURE"
 restartPolicyMaxRetries = 3

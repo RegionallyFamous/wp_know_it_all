@@ -10,7 +10,9 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "format": "prettier --write \"packages/**/src/**/*.ts\"",
-    "ci": "turbo run build typecheck lint test"
+    "ci": "turbo run build typecheck lint test",
+    "backup:db": "./scripts/backup-db.sh",
+    "restore:db": "./scripts/restore-db.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

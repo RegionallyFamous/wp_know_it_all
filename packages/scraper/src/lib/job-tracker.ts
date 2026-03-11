@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 
 export interface ScrapeJob {
   id: number;
@@ -109,28 +109,44 @@ export class JobTracker {
   }
 
   /** Finalise the job row with a JSON summary blob. */
-  completeJob(jobId: number, summary: Record<string, unknown>): void {
+  completeJob(
+    jobId: number,
+    payload: { totalDocs: number; totalErrors: number; [key: string]: unknown }
+  ): void {
     this.db
       .prepare(
         `UPDATE scrape_jobs
          SET status       = 'completed',
              completed_at = unixepoch(),
+             total_docs   = ?,
+             total_errors = ?,
              summary      = ?
          WHERE id = ?`
       )
-      .run(JSON.stringify(summary), jobId);
+      .run(payload.totalDocs, payload.totalErrors, JSON.stringify(payload), jobId);
   }
 
   /** Mark the job as failed (no summary needed). */
-  failJob(jobId: number): void {
+  failJob(
+    jobId: number,
+    payload?: { totalDocs?: number; totalErrors?: number; [key: string]: unknown }
+  ): void {
     this.db
       .prepare(
         `UPDATE scrape_jobs
          SET status       = 'failed',
-             completed_at = unixepoch()
+             completed_at = unixepoch(),
+             total_docs   = COALESCE(?, total_docs),
+             total_errors = COALESCE(?, total_errors),
+             summary      = COALESCE(?, summary)
          WHERE id = ?`
       )
-      .run(jobId);
+      .run(
+        payload?.totalDocs ?? null,
+        payload?.totalErrors ?? null,
+        payload ? JSON.stringify(payload) : null,
+        jobId
+      );
   }
 
   /**
