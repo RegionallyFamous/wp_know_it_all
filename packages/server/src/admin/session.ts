@@ -87,6 +87,13 @@ export function requireSameOriginPost(
   res: Response,
   next: NextFunction
 ): void {
+  // Allow login to proceed even when proxy/browser origin headers are non-standard.
+  // Keep CSRF protection enabled for all other mutating admin routes.
+  if (req.path === "/login" && req.method === "POST") {
+    next();
+    return;
+  }
+
   if (req.method !== "POST" && req.method !== "PUT" && req.method !== "PATCH" && req.method !== "DELETE") {
     next();
     return;

@@ -43,35 +43,38 @@ export function registerSearchTool(
     },
     async ({ query, category, doc_type, limit }) => {
       const startedAt = Date.now();
-      // Optionally expand query via Ollama (no-op if OLLAMA_HOST not set)
-      const expandedQuery = await expandQuery(query);
-
-      const results = queries.search({ query: expandedQuery, category, doc_type, limit });
-
-      if (results.length === 0) {
-        // Try the original query if expansion returned nothing
-        const fallbackResults =
-          expandedQuery !== query ? queries.search({ query, category, doc_type, limit }) : [];
-
-        if (fallbackResults.length === 0) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `No results found for "${query}". Try a broader query or remove filters.`,
-              },
-            ],
-          };
-        }
-
+      // Fast path: run local DB search first to avoid waiting on optional LLM expansion.
+      const baseResults = queries.search({ query, category, doc_type, limit });
+      if (baseResults.length > 0) {
         const elapsedMs = Date.now() - startedAt;
-        console.log(`[perf] search_wordpress_docs fallback completed in ${elapsedMs}ms`);
-        return formatResults(query, fallbackResults);
+        console.log(`[perf] search_wordpress_docs fast-path completed in ${elapsedMs}ms`);
+        return formatResults(query, baseResults);
       }
 
-      const elapsedMs = Date.now() - startedAt;
-      console.log(`[perf] search_wordpress_docs completed in ${elapsedMs}ms`);
-      return formatResults(query, results);
+      // Slow path: optionally expand query via Ollama when base search is empty.
+      const expandedQuery = await expandQuery(query);
+      if (expandedQuery !== query) {
+        const expandedResults = queries.search({
+          query: expandedQuery,
+          category,
+          doc_type,
+          limit,
+        });
+        if (expandedResults.length > 0) {
+          const elapsedMs = Date.now() - startedAt;
+          console.log(`[perf] search_wordpress_docs expanded-path completed in ${elapsedMs}ms`);
+          return formatResults(query, expandedResults);
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `No results found for "${query}". Try a broader query or remove filters.`,
+          },
+        ],
+      };
     }
   );
 }

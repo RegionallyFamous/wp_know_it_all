@@ -41,6 +41,8 @@ export interface FetchOptions {
   startPage?: number;
   /** Called after each page is saved so the caller can checkpoint */
   onPageComplete?: (page: number, totalPages: number, fetchedCount: number) => void;
+  /** Optional streaming callback to process one fetched page immediately */
+  onPageData?: (pages: DevHubPage[]) => Promise<void> | void;
 }
 
 interface FetchAllResult {
@@ -52,11 +54,12 @@ async function fetchAllOfType(
   contentType: string,
   opts: FetchOptions = {}
 ): Promise<FetchAllResult> {
-  const { modifiedAfter, startPage = 1, onPageComplete } = opts;
+  const { modifiedAfter, startPage = 1, onPageComplete, onPageData } = opts;
   const all: DevHubPage[] = [];
   const failedPages: number[] = [];
   let page = startPage;
   let totalPages = 1;
+  let fetchedCount = 0;
 
   while (page <= totalPages) {
     const params = new URLSearchParams({
@@ -88,10 +91,16 @@ async function fetchAllOfType(
     if (!Array.isArray(data) || data.length === 0) break;
 
     totalPages = parseInt(res.headers.get("X-WP-TotalPages") ?? "1", 10);
-    all.push(...data);
+    fetchedCount += data.length;
 
-    console.log(`[devhub] ${contentType} — page ${page}/${totalPages} (${all.length} fetched)`);
-    onPageComplete?.(page, totalPages, all.length);
+    if (onPageData) {
+      await onPageData(data);
+    } else {
+      all.push(...data);
+    }
+
+    console.log(`[devhub] ${contentType} — page ${page}/${totalPages} (${fetchedCount} fetched)`);
+    onPageComplete?.(page, totalPages, fetchedCount);
 
     page++;
     if (page <= totalPages) await sleep(REQUEST_DELAY_MS);
@@ -148,28 +157,59 @@ function pageToDocument(
 export interface IngestDevhubResult {
   documents: InsertableDocument[];
   failedPages: number[];
+  processedDocuments: number;
+}
+
+export interface IngestDevhubOptions extends FetchOptions {
+  onDocumentsBatch?: (docs: InsertableDocument[]) => Promise<void> | void;
 }
 
 export async function ingestDevhubContentType(
   typeConfig: (typeof DEVHUB_CONTENT_TYPES)[number],
-  opts: FetchOptions = {}
+  opts: IngestDevhubOptions = {}
 ): Promise<IngestDevhubResult> {
   const { type, category, docType } = typeConfig;
   const mode = opts.modifiedAfter ? `incremental (after ${opts.modifiedAfter})` : "full";
   console.log(`\n[devhub] Starting ${mode} ingest: ${type}`);
 
-  const { pages, failedPages } = await fetchAllOfType(type, opts);
-  console.log(
-    `[devhub] ${type}: fetched ${pages.length} pages${failedPages.length > 0 ? ` (${failedPages.length} failed)` : ""}, converting...`
-  );
-
   const documents: InsertableDocument[] = [];
+  let processedDocuments = 0;
+  const onPageData = async (pages: DevHubPage[]): Promise<void> => {
+    const batch: InsertableDocument[] = [];
+    for (const page of pages) {
+      const doc = pageToDocument(page, category, docType);
+      if (doc) batch.push(doc);
+    }
+    processedDocuments += batch.length;
+    if (opts.onDocumentsBatch) {
+      await opts.onDocumentsBatch(batch);
+      return;
+    }
+    if (batch.length > 0) {
+      documents.push(...batch);
+    }
+  };
 
-  for (const page of pages) {
-    const doc = pageToDocument(page, category, docType);
-    if (doc) documents.push(doc);
+  const { pages, failedPages } = await fetchAllOfType(type, {
+    ...opts,
+    onPageData: opts.onPageData ? onPageData : undefined,
+  });
+
+  if (!opts.onPageData) {
+    console.log(
+      `[devhub] ${type}: fetched ${pages.length} pages${failedPages.length > 0 ? ` (${failedPages.length} failed)` : ""}, converting...`
+    );
+    for (const page of pages) {
+      const doc = pageToDocument(page, category, docType);
+      if (doc) documents.push(doc);
+    }
+  }
+
+  if (opts.onDocumentsBatch) {
+    console.log(`[devhub] ${type}: ${processedDocuments} documents processed`);
+    return { documents: [], failedPages, processedDocuments };
   }
 
   console.log(`[devhub] ${type}: ${documents.length} documents processed`);
-  return { documents, failedPages };
+  return { documents, failedPages, processedDocuments: documents.length };
 }

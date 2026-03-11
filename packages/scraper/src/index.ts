@@ -83,16 +83,18 @@ async function main(): Promise<void> {
         onPageComplete: (page, _total, _fetched) => {
           tracker.saveCheckpoint(typeConfig.type, page);
         },
+        onDocumentsBatch: (docs) => {
+          if (docs.length === 0) return;
+          writer.insertBatch(docs);
+          sourceDocs += docs.length;
+          totalDocs += docs.length;
+        },
       });
-      const docs = result.documents;
       const failedPages = result.failedPages;
 
-      if (docs.length > 0) {
-        writer.insertBatch(docs);
-        sourceDocs = docs.length;
-        totalDocs += docs.length;
+      if (sourceDocs > 0) {
         console.log(
-          `[scraper] ✓ ${typeConfig.type}: ${docs.length} docs (total: ${writer.count().toLocaleString()})`
+          `[scraper] ✓ ${typeConfig.type}: ${sourceDocs} docs (total: ${writer.count().toLocaleString()})`
         );
       }
 
