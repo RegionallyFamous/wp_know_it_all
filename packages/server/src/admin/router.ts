@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { spawn } from "node:child_process";
 import cookieParser from "cookie-parser";
 import { z } from "zod";
 import type Database from "better-sqlite3";
@@ -28,6 +29,10 @@ import {
 } from "./templates.js";
 import type { Request, Response } from "express";
 import { readRecentQualityEvents, summarizeQualityEvents } from "../lib/quality-metrics.js";
+import { buildQueries } from "../db/queries.js";
+import { buildGroundedAnswer } from "../tools/answer-question.js";
+import { verifyGroundedAnswer } from "../lib/answer-verifier.js";
+import { getBeyondRagFlags } from "../lib/feature-flags.js";
 
 function resolveScraperEntrypoint(): {
   entrypoint: string;
@@ -102,6 +107,235 @@ function timeAgo(ts: number): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+interface AdminActionEvent {
+  ts: number;
+  action: string;
+  status: "started" | "ok" | "error";
+  detail: string;
+}
+
+interface EvalRunState {
+  status: "idle" | "running" | "success" | "failed";
+  startedAt: number | null;
+  completedAt: number | null;
+  lastMessage: string;
+}
+
+interface ReportStatus {
+  name: string;
+  exists: boolean;
+  generatedAt: string | null;
+  pass: boolean | null;
+  summary: string;
+}
+
+const adminActionEvents: AdminActionEvent[] = [];
+const evalRunStates: Record<"baseline" | "ops", EvalRunState> = {
+  baseline: { status: "idle", startedAt: null, completedAt: null, lastMessage: "Not run from admin yet." },
+  ops: { status: "idle", startedAt: null, completedAt: null, lastMessage: "Not run from admin yet." },
+};
+let retrievalDiagnosticsInFlight = 0;
+const retrievalDiagnosticsMaxInFlight = (() => {
+  const parsed = Number.parseInt(process.env["ADMIN_RETRIEVAL_MAX_IN_FLIGHT"] ?? "2", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2;
+})();
+const reportStatusCache = new Map<
+  string,
+  { mtimeMs: number; size: number; value: ReportStatus }
+>();
+const adminActionRateLimit = new Map<string, { count: number; resetAt: number }>();
+let adminActionRateLimitLastCleanupAt = 0;
+
+function pushAdminAction(action: string, status: AdminActionEvent["status"], detail: string): void {
+  const boundedDetail = detail.length > 600 ? `${detail.slice(0, 600)}…` : detail;
+  adminActionEvents.push({ ts: Date.now(), action, status, detail: boundedDetail });
+  while (adminActionEvents.length > 200) adminActionEvents.shift();
+}
+
+function formatDurationSeconds(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return "0s";
+  if (totalSeconds < 60) return `${Math.round(totalSeconds)}s`;
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = Math.round(totalSeconds % 60);
+  return `${mins}m ${secs}s`;
+}
+
+function isConfirmYes(req: Request): boolean {
+  const body = req.body as Record<string, unknown> | undefined;
+  const bodyConfirm = body?.["confirm"];
+  return (
+    (req.query["confirm"] as string | undefined)?.toLowerCase() === "yes" ||
+    (typeof bodyConfirm === "string" && bodyConfirm.toLowerCase() === "yes")
+  );
+}
+
+function safeExternalHref(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.toString();
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+    promise
+      .then((value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      });
+  });
+}
+
+function allowAdminAction(req: Request, action: string): boolean {
+  const windowMs = 10_000;
+  const maxRequests = 10;
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const key = `${action}:${ip}`;
+  const now = Date.now();
+  if (now - adminActionRateLimitLastCleanupAt >= 30_000) {
+    for (const [rateKey, value] of adminActionRateLimit.entries()) {
+      if (now > value.resetAt) adminActionRateLimit.delete(rateKey);
+    }
+    adminActionRateLimitLastCleanupAt = now;
+  }
+  const existing = adminActionRateLimit.get(key);
+  if (!existing || now > existing.resetAt) {
+    adminActionRateLimit.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  existing.count += 1;
+  return existing.count <= maxRequests;
+}
+
+function renderStageStatus(label: string, status: "green" | "amber" | "red", detail: string): string {
+  const style =
+    status === "green"
+      ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-300"
+      : status === "amber"
+        ? "bg-amber-500/10 border-amber-400/30 text-amber-300"
+        : "bg-rose-500/10 border-rose-400/30 text-rose-300";
+  const dot = status === "green" ? "bg-emerald-400" : status === "amber" ? "bg-amber-400" : "bg-rose-400";
+  return `<div class="border rounded-lg p-4 ${style}">
+  <div class="flex items-center gap-2 text-sm font-semibold"><span class="w-2 h-2 rounded-full ${dot}"></span>${escapeHtml(label)}</div>
+  <p class="text-xs mt-2 opacity-90">${escapeHtml(detail)}</p>
+</div>`;
+}
+
+function readReportStatus(name: "baseline" | "ops"): ReportStatus {
+  const fileName = name === "baseline" ? "baseline-report.md" : "ops-slo-report.md";
+  const candidates = [
+    process.env[name === "baseline" ? "BASELINE_REPORT_DIR" : "OPS_REPORT_DIR"]?.trim() ?? "",
+    join(process.cwd(), "reports"),
+    join(process.cwd(), "packages/server/reports"),
+  ].filter((dir) => dir.length > 0);
+  for (const dir of candidates) {
+    const path = join(dir, fileName);
+    if (!existsSync(path)) continue;
+    const stat = statSync(path);
+    const cacheKey = `${name}:${path}`;
+    const cached = reportStatusCache.get(cacheKey);
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+      return cached.value;
+    }
+    const body = readFileSync(path, "utf-8");
+    const generatedAt = body.match(/Generated:\s*([^\n]+)/i)?.[1]?.trim() ?? null;
+    const passMatch = body.match(/Overall:\s*\*\*(PASS|FAIL)\*\*/i)?.[1];
+    const pass = passMatch ? passMatch.toUpperCase() === "PASS" : null;
+    const summary =
+      name === "baseline"
+        ? body.match(/Total documents:\s*\*\*([^*]+)\*\*/i)?.[1]?.trim() ?? "Baseline report available"
+        : body.match(/Overall:\s*\*\*(PASS|FAIL)\*\*/i)?.[1]?.toUpperCase() ?? "Ops report available";
+    const value = { name, exists: true, generatedAt, pass, summary };
+    reportStatusCache.set(cacheKey, { mtimeMs: stat.mtimeMs, size: stat.size, value });
+    return value;
+  }
+  return { name, exists: false, generatedAt: null, pass: null, summary: "No report found yet." };
+}
+
+function spawnEvalScript(kind: "baseline" | "ops"): void {
+  const state = evalRunStates[kind];
+  if (state.status === "running") return;
+  if (state.completedAt && Date.now() - state.completedAt < 10_000) {
+    return;
+  }
+
+  state.status = "running";
+  state.startedAt = Date.now();
+  state.lastMessage = `Running ${kind} report...`;
+  pushAdminAction(`eval:${kind}`, "started", "Triggered from admin controls.");
+
+  const script = kind === "baseline" ? "eval:baseline" : "eval:ops";
+  const child = spawn("pnpm", ["--filter", "@wp-know-it-all/server", script], {
+    cwd: process.cwd(),
+    stdio: "pipe",
+  });
+
+  let output = "";
+  const maxOutputChars = 20_000;
+  const appendChunk = (chunk: unknown): void => {
+    if (output.length >= maxOutputChars) return;
+    output += String(chunk);
+    if (output.length > maxOutputChars) {
+      output = output.slice(0, maxOutputChars);
+    }
+  };
+  const timeoutMs = kind === "baseline" ? 90_000 : 60_000;
+  let timeoutTriggered = false;
+  const timeout = setTimeout(() => {
+    timeoutTriggered = true;
+    child.kill("SIGTERM");
+    setTimeout(() => {
+      if (!child.killed) child.kill("SIGKILL");
+    }, 5_000).unref();
+    state.status = "failed";
+    state.completedAt = Date.now();
+    state.lastMessage = `Timed out after ${Math.round(timeoutMs / 1000)}s`;
+    pushAdminAction(`eval:${kind}`, "error", state.lastMessage);
+  }, timeoutMs);
+  child.stdout.on("data", (chunk) => {
+    appendChunk(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    appendChunk(chunk);
+  });
+
+  child.on("error", (error) => {
+    clearTimeout(timeout);
+    state.status = "failed";
+    state.completedAt = Date.now();
+    state.lastMessage = `Failed to start: ${String(error)}`;
+    pushAdminAction(`eval:${kind}`, "error", state.lastMessage);
+  });
+
+  child.on("close", (code) => {
+    clearTimeout(timeout);
+    if (timeoutTriggered || (state.status === "failed" && state.lastMessage.includes("Timed out"))) {
+      return;
+    }
+    state.completedAt = Date.now();
+    if (code === 0) {
+      state.status = "success";
+      state.lastMessage = output.trim().split("\n").slice(-2).join(" | ") || "Completed successfully.";
+      pushAdminAction(`eval:${kind}`, "ok", state.lastMessage);
+      return;
+    }
+    state.status = "failed";
+    state.lastMessage = output.trim().split("\n").slice(-3).join(" | ") || `Exited with code ${code}`;
+    pushAdminAction(`eval:${kind}`, "error", state.lastMessage);
+  });
+}
+
 // ── Dashboard page body ─────────────────────────────────────────────────────
 
 function renderDashboardShell(): string {
@@ -160,7 +394,7 @@ function renderDashboardShell(): string {
     <div class="flex items-center justify-between mb-5">
       <h2 class="text-sm font-semibold text-slate-200 uppercase tracking-wider">Recent Errors</h2>
       <button
-        hx-post="/admin/scraper/errors/clear"
+        hx-post="/admin/scraper/errors/clear?confirm=yes"
         hx-target="#recent-errors"
         hx-swap="innerHTML"
         hx-confirm="Clear all scraper error history?"
@@ -294,7 +528,7 @@ function renderJobsFragment(
   jobs: ReturnType<ReturnType<typeof buildAdminQueries>["getJobs"]>
 ): string {
   const rows = jobs.map((j) => [
-    `<span class="font-mono text-slate-400 text-xs">#${j.id}</span>`,
+    `<a href="/admin/jobs/${j.id}" class="font-mono text-sky-400 hover:text-sky-300 text-xs">#${j.id}</a>`,
     formatTs(j.started_at),
     formatTs(j.completed_at),
     formatDuration(j.started_at, j.completed_at),
@@ -314,6 +548,79 @@ function renderJobsFragment(
     rows
   )}
 </div>`;
+}
+
+function renderJobsAnalytics(
+  analytics: ReturnType<ReturnType<typeof buildAdminQueries>["getJobAnalytics"]>
+): string {
+  return `<div class="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
+  ${statCard("Sampled Jobs", analytics.sampledJobs.toLocaleString(), "slate")}
+  ${statCard("Completed", analytics.completedJobs.toLocaleString(), "emerald")}
+  ${statCard("Failed", analytics.failedJobs.toLocaleString(), analytics.failedJobs > 0 ? "rose" : "emerald")}
+  ${statCard("Avg Duration", formatDurationSeconds(analytics.avgDurationSec), "sky")}
+  ${statCard("P95 Duration", formatDurationSeconds(analytics.p95DurationSec), "amber")}
+  ${statCard("Avg Docs/Min", analytics.avgDocsPerMin.toFixed(1), "violet")}
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Document Growth</h2>
+    <div class="text-sm text-slate-300">Last 24h: <span class="text-slate-100 font-semibold">${analytics.docsLast24h.toLocaleString()}</span></div>
+    <div class="text-sm text-slate-300 mt-1">Last 7d: <span class="text-slate-100 font-semibold">${analytics.docsLast7d.toLocaleString()}</span></div>
+  </div>
+  <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Top Failing Sources (7d)</h2>
+    ${
+      analytics.topFailingSources.length === 0
+        ? `<p class="text-sm text-slate-500">No recent scrape errors by source.</p>`
+        : analytics.topFailingSources
+            .map(
+              (row) =>
+                `<div class="flex justify-between text-sm py-1 border-b border-slate-800/60 last:border-0"><span class="text-slate-300">${escapeHtml(row.source_type)}</span><span class="text-rose-300">${row.count.toLocaleString()}</span></div>`
+            )
+            .join("\n")
+    }
+  </div>
+</div>`;
+}
+
+function renderJobDetailPage(
+  job: ReturnType<ReturnType<typeof buildAdminQueries>["getJobById"]>,
+  previousJob: ReturnType<ReturnType<typeof buildAdminQueries>["getPreviousJob"]>,
+  errors: ReturnType<ReturnType<typeof buildAdminQueries>["getErrorsForJob"]>
+): string {
+  if (!job) {
+    return `<div class="text-slate-500 text-sm">Job not found.</div>`;
+  }
+  const docsDelta = previousJob ? job.total_docs - previousJob.total_docs : job.total_docs;
+  const errorDelta = previousJob ? job.total_errors - previousJob.total_errors : job.total_errors;
+  const errorRows = errors.map((error) => [
+    formatTs(error.created_at),
+    escapeHtml(error.source_type),
+    (() => {
+      const safeUrl = safeExternalHref(error.url);
+      if (!safeUrl || !error.url) return "—";
+      return `<a href="${escapeHtml(safeUrl)}" class="text-sky-400 hover:text-sky-300 text-xs" target="_blank" rel="noreferrer">${escapeHtml(error.url)}</a>`;
+    })(),
+    `<span class="text-xs text-slate-400">${escapeHtml(error.error_msg)}</span>`,
+  ]);
+
+  return `
+<div class="mb-8">
+  <h1 class="text-2xl font-bold text-slate-100">Job #${job.id}</h1>
+  <p class="text-sm text-slate-500 mt-1">Detailed run diagnostics and deltas</p>
+</div>
+<div class="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
+  ${statCard("Status", job.status, job.status === "completed" ? "emerald" : job.status === "failed" ? "rose" : "amber")}
+  ${statCard("Started", formatTs(job.started_at), "slate")}
+  ${statCard("Completed", formatTs(job.completed_at), "slate")}
+  ${statCard("Duration", formatDuration(job.started_at, job.completed_at), "sky")}
+  ${statCard("Docs Delta", docsDelta >= 0 ? `+${docsDelta}` : `${docsDelta}`, docsDelta >= 0 ? "emerald" : "rose")}
+  ${statCard("Errors Delta", errorDelta >= 0 ? `+${errorDelta}` : `${errorDelta}`, errorDelta > 0 ? "rose" : "emerald")}
+</div>
+<div class="mb-4 text-xs text-slate-500">Summary: ${job.summary ? escapeHtml(job.summary) : "—"}</div>
+<h2 class="text-sm font-semibold text-slate-300 mb-3">Source Errors (${errors.length})</h2>
+${table(["Timestamp", "Source", "URL", "Error"], errorRows)}
+`;
 }
 
 // ── Search page ──────────────────────────────────────────────────────────────
@@ -423,7 +730,12 @@ function renderSearchResults(
     escapeHtml(r.doc_type),
     `<span class="font-mono text-xs text-slate-400">${escapeHtml(r.source)}</span>`,
     r.category ? escapeHtml(r.category) : `<span class="text-slate-600">—</span>`,
-    `<a href="${escapeHtml(r.url)}" target="_blank" rel="noreferrer" class="text-sky-400 hover:text-sky-300 text-xs truncate max-w-xs inline-block transition-colors">${escapeHtml(r.url)}</a>`,
+    (() => {
+      const safeUrl = safeExternalHref(r.url);
+      return safeUrl
+        ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noreferrer" class="text-sky-400 hover:text-sky-300 text-xs truncate max-w-xs inline-block transition-colors">${escapeHtml(r.url)}</a>`
+        : `<span class="text-slate-600">invalid-url</span>`;
+    })(),
   ]);
 
   const activeFilters = [filters.source ? `source=${filters.source}` : "", filters.category ? `category=${filters.category}` : ""]
@@ -451,7 +763,7 @@ function renderScraperPage(): string {
   <!-- Action buttons -->
   <div class="flex items-center gap-3">
     <button
-      hx-post="/admin/scraper/trigger"
+      hx-post="/admin/scraper/trigger?confirm=yes"
       hx-swap="none"
       hx-confirm="Start a full scrape run?"
       class="bg-sky-600 hover:bg-sky-500 active:bg-sky-700 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors"
@@ -459,14 +771,15 @@ function renderScraperPage(): string {
       Run Scraper
     </button>
     <button
-      hx-post="/admin/scraper/kill"
+      hx-post="/admin/scraper/kill?confirm=yes"
       hx-swap="none"
+      hx-confirm="Kill the active scraper process?"
       class="bg-slate-700 hover:bg-slate-600 active:bg-slate-800 text-slate-200 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors"
     >
       Kill
     </button>
     <button
-      hx-post="/admin/scraper/errors/clear"
+      hx-post="/admin/scraper/errors/clear?confirm=yes"
       hx-target="#scraper-log"
       hx-swap="none"
       hx-confirm="Clear all scraper error history?"
@@ -519,8 +832,9 @@ function renderScraperPage(): string {
     </div>
     <div class="flex items-center gap-3">
       <button
-        hx-post="/admin/scraper/rebuild-fts"
+        hx-post="/admin/scraper/rebuild-fts?confirm=yes"
         hx-swap="none"
+        hx-confirm="Rebuild full-text index now?"
         class="text-xs text-slate-500 hover:text-slate-300 transition-colors px-2 py-1 rounded hover:bg-slate-800"
       >
         Rebuild FTS
@@ -634,11 +948,201 @@ ${table(["Timestamp", "Tool", "Intent", "Engine", "Abstained", "Policy", "Policy
 `;
 }
 
+function renderHealthPageShell(): string {
+  return `
+<div class="mb-8">
+  <h1 class="text-2xl font-bold text-slate-100">Pipeline Health</h1>
+  <p class="text-sm text-slate-500 mt-1">End-to-end status across ingestion, retrieval, quality, and release gates</p>
+</div>
+<div id="health-fragment" hx-get="/admin/health/fragment" hx-trigger="load, every 5s" hx-swap="innerHTML">
+  <div class="text-slate-600 text-sm">Loading health signals…</div>
+</div>`;
+}
+
+function renderHealthFragment(args: {
+  stats: ReturnType<ReturnType<typeof buildAdminQueries>["getStats"]>;
+  analytics: ReturnType<ReturnType<typeof buildAdminQueries>["getJobAnalytics"]>;
+  qualitySummary: ReturnType<typeof summarizeQualityEvents>;
+  baseline: ReportStatus;
+  ops: ReportStatus;
+}): string {
+  const now = Math.floor(Date.now() / 1000);
+  const lastStarted = args.stats.lastJob?.started_at ?? 0;
+  const freshnessAge = lastStarted > 0 ? now - lastStarted : Number.POSITIVE_INFINITY;
+  const ingestStatus: "green" | "amber" | "red" =
+    args.stats.lastJob?.status === "completed" && freshnessAge <= 48 * 60 * 60
+      ? "green"
+      : args.stats.lastJob
+          ? "amber"
+          : "red";
+  const growthStatus: "green" | "amber" | "red" =
+    args.analytics.docsLast24h > 0 ? "green" : args.analytics.docsLast7d > 0 ? "amber" : "red";
+  const qualityStatus: "green" | "amber" | "red" =
+    args.qualitySummary.totalEvents > 0 &&
+    args.qualitySummary.avgCitationCoverage >= 0.6 &&
+    args.qualitySummary.avgUnsupportedClaimRate <= 0.12
+      ? "green"
+      : args.qualitySummary.totalEvents > 0
+        ? "amber"
+        : "red";
+  const opsStatus: "green" | "amber" | "red" =
+    args.ops.pass === true ? "green" : args.ops.exists ? "red" : "amber";
+
+  return `
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+  ${renderStageStatus(
+    "Ingest Freshness",
+    ingestStatus,
+    args.stats.lastJob
+      ? `Last job ${args.stats.lastJob.status} at ${formatTs(args.stats.lastJob.started_at)}`
+      : "No scrape jobs found yet."
+  )}
+  ${renderStageStatus(
+    "Document Growth",
+    growthStatus,
+    `+${args.analytics.docsLast24h.toLocaleString()} docs (24h), +${args.analytics.docsLast7d.toLocaleString()} docs (7d)`
+  )}
+  ${renderStageStatus(
+    "Retrieval Quality",
+    qualityStatus,
+    `Citation ${(args.qualitySummary.avgCitationCoverage * 100).toFixed(1)}%, Unsupported ${(args.qualitySummary.avgUnsupportedClaimRate * 100).toFixed(1)}%`
+  )}
+  ${renderStageStatus(
+    "Ops Gate",
+    opsStatus,
+    args.ops.exists
+      ? `Ops report: ${args.ops.summary}${args.ops.generatedAt ? ` (${args.ops.generatedAt})` : ""}`
+      : "No ops report found yet."
+  )}
+</div>
+<div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+  ${statCard("Total Docs", args.stats.totalDocs.toLocaleString(), "sky")}
+  ${statCard("Jobs Sampled", args.analytics.sampledJobs.toLocaleString(), "slate")}
+  ${statCard("Failed Jobs", args.analytics.failedJobs.toLocaleString(), args.analytics.failedJobs > 0 ? "rose" : "emerald")}
+  ${statCard("Quality Events", args.qualitySummary.totalEvents.toLocaleString(), "violet")}
+  ${statCard("Baseline", args.baseline.exists ? "available" : "missing", args.baseline.exists ? "emerald" : "amber")}
+</div>`;
+}
+
+function renderRetrievalPage(): string {
+  return `
+<div class="mb-8">
+  <h1 class="text-2xl font-bold text-slate-100">Retrieval Diagnostics</h1>
+  <p class="text-sm text-slate-500 mt-1">Inspect intent routing, evidence selection, and grounding metrics.</p>
+</div>
+<div class="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+  <form hx-post="/admin/retrieval/run" hx-target="#retrieval-output" hx-swap="innerHTML" class="grid grid-cols-1 lg:grid-cols-6 gap-3">
+    <input name="question" type="text" required placeholder="Ask a WordPress question..." class="lg:col-span-3 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-slate-100" />
+    <input name="category" type="text" placeholder="category (optional)" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100" />
+    <input name="doc_type" type="text" placeholder="doc_type (optional)" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100" />
+    <button type="submit" class="bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium px-5 py-2.5 rounded-lg">Run Diagnostic</button>
+  </form>
+</div>
+<div id="retrieval-output" class="text-slate-500 text-sm">Submit a query to inspect retrieval behavior.</div>`;
+}
+
+function renderEvalsPageShell(): string {
+  return `
+<div class="mb-8">
+  <h1 class="text-2xl font-bold text-slate-100">Eval + Ops Center</h1>
+  <p class="text-sm text-slate-500 mt-1">View latest report outcomes and trigger report refreshes.</p>
+</div>
+<div class="flex items-center gap-3 mb-6">
+  <button hx-post="/admin/evals/run-baseline?confirm=yes" hx-swap="none" hx-confirm="Run baseline report now?" class="bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium px-4 py-2 rounded-lg">Run Baseline Report</button>
+  <button hx-post="/admin/evals/run-ops?confirm=yes" hx-swap="none" hx-confirm="Run ops report now?" class="bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2 rounded-lg">Run Ops Report</button>
+</div>
+<div id="evals-fragment" hx-get="/admin/evals/fragment" hx-trigger="load, every 5s" hx-swap="innerHTML">
+  <div class="text-slate-600 text-sm">Loading eval state…</div>
+</div>`;
+}
+
+function renderEvalsFragment(baseline: ReportStatus, ops: ReportStatus): string {
+  const runRows = (["baseline", "ops"] as const).map((kind) => {
+    const state = evalRunStates[kind];
+    return [
+    escapeHtml(kind),
+    statusBadge(state.status),
+    state.startedAt ? new Date(state.startedAt).toLocaleString() : "—",
+    state.completedAt ? new Date(state.completedAt).toLocaleString() : "—",
+    `<span class="text-xs text-slate-400">${escapeHtml(state.lastMessage)}</span>`,
+    ];
+  });
+  const reportRows = [baseline, ops].map((report) => [
+    escapeHtml(report.name),
+    report.exists ? "yes" : "no",
+    report.generatedAt ? escapeHtml(report.generatedAt) : "—",
+    report.pass == null ? "—" : report.pass ? `<span class="text-emerald-300">PASS</span>` : `<span class="text-rose-300">FAIL</span>`,
+    escapeHtml(report.summary),
+  ]);
+  return `
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  ${statCard("Baseline", baseline.exists ? "ready" : "missing", baseline.exists ? "emerald" : "amber")}
+  ${statCard("Ops", ops.exists ? "ready" : "missing", ops.exists ? "emerald" : "amber")}
+  ${statCard("Baseline Run", evalRunStates.baseline.status, "sky")}
+  ${statCard("Ops Run", evalRunStates.ops.status, "violet")}
+</div>
+<h2 class="text-sm font-semibold text-slate-300 mb-3">Report Status</h2>
+${table(["Report", "Exists", "Generated", "Overall", "Summary"], reportRows)}
+<h2 class="text-sm font-semibold text-slate-300 mt-6 mb-3">Run History</h2>
+${table(["Run", "State", "Started", "Completed", "Message"], runRows)}
+`;
+}
+
+function renderControlsPage(flags: ReturnType<typeof getBeyondRagFlags>): string {
+  const flagRows = Object.entries(flags).map(([key, value]) => [
+    `<span class="font-mono text-xs text-slate-300">${escapeHtml(key)}</span>`,
+    value ? `<span class="text-emerald-300">enabled</span>` : `<span class="text-amber-300">disabled</span>`,
+    `<code class="text-xs text-slate-400">railway variables set ${escapeHtml(key)}=${value ? "0" : "1"}</code>`,
+  ]);
+  return `
+<div class="mb-8">
+  <h1 class="text-2xl font-bold text-slate-100">Operational Controls</h1>
+  <p class="text-sm text-slate-500 mt-1">High-impact admin actions with explicit risk labels and audit trail.</p>
+</div>
+<div class="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+  <h2 class="text-sm font-semibold text-slate-300 mb-4">Safe Controls</h2>
+  <div class="flex flex-wrap gap-3">
+    <button hx-post="/admin/scraper/trigger?confirm=yes" hx-swap="none" hx-confirm="Start scraper run?" class="bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium px-4 py-2 rounded-lg">Run Scraper</button>
+    <button hx-post="/admin/scraper/kill?confirm=yes" hx-swap="none" hx-confirm="Kill active scraper process?" class="bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium px-4 py-2 rounded-lg">Kill Scraper</button>
+    <button hx-post="/admin/scraper/rebuild-fts?confirm=yes" hx-swap="none" hx-confirm="Rebuild full-text index now?" class="bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium px-4 py-2 rounded-lg">Rebuild FTS</button>
+    <button hx-post="/admin/scraper/errors/clear?confirm=yes" hx-swap="none" hx-confirm="Clear all scrape errors?" class="bg-slate-700 hover:bg-slate-600 text-slate-100 text-sm font-medium px-4 py-2 rounded-lg">Clear Errors</button>
+    <button hx-post="/admin/scraper/wipe?confirm=yes" hx-swap="none" hx-confirm="Delete ALL docs and checkpoints?" class="bg-rose-700 hover:bg-rose-600 text-white text-sm font-medium px-4 py-2 rounded-lg">Wipe All Docs</button>
+  </div>
+</div>
+<div class="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+  <h2 class="text-sm font-semibold text-slate-300 mb-3">Feature Flags</h2>
+  ${table(["Flag", "Current", "Rollback Command"], flagRows)}
+</div>
+<div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
+  <h2 class="text-sm font-semibold text-slate-300 mb-3">Action Log</h2>
+  <div id="controls-log" hx-get="/admin/controls/log" hx-trigger="load, every 3s" hx-swap="innerHTML">
+    <div class="text-slate-500 text-sm">Loading action log…</div>
+  </div>
+</div>`;
+}
+
+function renderControlsLogFragment(): string {
+  if (adminActionEvents.length === 0) {
+    return `<div class="text-slate-500 text-sm">No admin actions recorded in this process yet.</div>`;
+  }
+  const rows = adminActionEvents
+    .slice(-40)
+    .reverse()
+    .map((entry) => [
+      new Date(entry.ts).toLocaleString(),
+      `<span class="text-xs font-mono text-slate-300">${escapeHtml(entry.action)}</span>`,
+      statusBadge(entry.status),
+      `<span class="text-xs text-slate-400">${escapeHtml(entry.detail)}</span>`,
+    ]);
+  return table(["Timestamp", "Action", "Status", "Detail"], rows);
+}
+
 // ── Router factory ───────────────────────────────────────────────────────────
 
 export function createAdminRouter(db: Database.Database): ReturnType<typeof Router> {
   const router = Router();
   const queries = buildAdminQueries(db);
+  const searchQueries = buildQueries(db);
   const searchParamsSchema = z.object({
     q: z.string().trim().max(500).optional().default(""),
     source: z
@@ -676,6 +1180,12 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
     limit: z.coerce.number().int().min(1).max(200).optional().default(50),
     offset: z.coerce.number().int().min(0).max(100_000).optional().default(0),
   });
+  const retrievalParamsSchema = z.object({
+    question: z.string().trim().min(3).max(1500),
+    category: z.string().trim().optional(),
+    doc_type: z.string().trim().optional(),
+    top_k: z.coerce.number().int().min(3).max(12).default(6),
+  });
 
   // Cookie parser (scoped to admin router)
   router.use(cookieParser());
@@ -707,11 +1217,31 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
 
   // All routes below require auth
   router.use(requireAdminAuth);
+  router.use((_req: Request, res: Response, next) => {
+    // Admin pages include operational data and controls; avoid browser/proxy caching.
+    res.setHeader("Cache-Control", "no-store, private, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    next();
+  });
 
   // ── Dashboard ──────────────────────────────────────────────────────────
 
   router.get("/", (_req: Request, res: Response) => {
     res.send(page("Dashboard", renderDashboardShell(), "dashboard"));
+  });
+
+  router.get("/health", (_req: Request, res: Response) => {
+    res.send(page("Health", renderHealthPageShell(), "health"));
+  });
+
+  router.get("/health/fragment", (_req: Request, res: Response) => {
+    const stats = queries.getStats();
+    const analytics = queries.getJobAnalytics(50);
+    const qualitySummary = summarizeQualityEvents(readRecentQualityEvents(300));
+    const baseline = readReportStatus("baseline");
+    const ops = readReportStatus("ops");
+    res.send(renderHealthFragment({ stats, analytics, qualitySummary, baseline, ops }));
   });
 
   router.get("/stats", (req: Request, res: Response) => {
@@ -737,12 +1267,27 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
 
   router.get("/jobs", (_req: Request, res: Response) => {
     const jobs = queries.getJobs();
-    res.send(page("Jobs", renderJobsPage(jobs), "jobs"));
+    const analytics = queries.getJobAnalytics(50);
+    res.send(page("Jobs", `${renderJobsAnalytics(analytics)}${renderJobsPage(jobs)}`, "jobs"));
   });
 
   router.get("/jobs/fragment", (_req: Request, res: Response) => {
     const jobs = queries.getJobs();
     res.send(renderJobsFragment(jobs));
+  });
+
+  router.get("/jobs/:id", (req: Request, res: Response) => {
+    const rawId = req.params["id"];
+    const idValue = Array.isArray(rawId) ? rawId[0] ?? "" : rawId ?? "";
+    const id = Number.parseInt(idValue, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).send("Invalid job id.");
+      return;
+    }
+    const job = queries.getJobById(id);
+    const previousJob = queries.getPreviousJob(id);
+    const errors = queries.getErrorsForJob(id);
+    res.send(page(`Job #${id}`, renderJobDetailPage(job, previousJob, errors), "jobs"));
   });
 
   // ── Search ─────────────────────────────────────────────────────────────
@@ -753,6 +1298,129 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
 
   router.get("/quality", (_req: Request, res: Response) => {
     res.send(page("Quality", renderQualityPage(), "quality"));
+  });
+
+  router.get("/retrieval", (_req: Request, res: Response) => {
+    res.send(page("Retrieval", renderRetrievalPage(), "retrieval"));
+  });
+
+  router.post("/retrieval/run", async (req: Request, res: Response) => {
+    if (retrievalDiagnosticsInFlight >= Math.max(1, retrievalDiagnosticsMaxInFlight)) {
+      res
+        .status(429)
+        .send(`<div class="text-amber-300 text-sm">Retrieval diagnostics are busy. Try again in a moment.</div>`);
+      return;
+    }
+    const body = req.body as Record<string, unknown> | undefined;
+    const parsed = retrievalParamsSchema.safeParse({
+      question: body?.["question"],
+      category: body?.["category"],
+      doc_type: body?.["doc_type"],
+      top_k: body?.["top_k"],
+    });
+    if (!parsed.success) {
+      res.status(400).send(`<div class="text-rose-300 text-sm">Invalid retrieval parameters.</div>`);
+      return;
+    }
+    const { question, category, doc_type, top_k } = parsed.data;
+    retrievalDiagnosticsInFlight += 1;
+    try {
+      const timeoutMs = (() => {
+        const parsedTimeout = Number.parseInt(process.env["ADMIN_RETRIEVAL_TIMEOUT_MS"] ?? "12000", 10);
+        return Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 12_000;
+      })();
+      const timedResult = await withTimeout(
+        buildGroundedAnswer(searchQueries, {
+          question,
+          category: category || undefined,
+          doc_type: doc_type || undefined,
+          top_k,
+          mode: "answer",
+        }),
+        timeoutMs,
+        "retrieval diagnostics"
+      );
+      const verification = verifyGroundedAnswer(timedResult.answer, searchQueries);
+      const evidenceRows = timedResult.evidence.map((item, idx) => [
+        `${idx + 1}`,
+        escapeHtml(item.title),
+        `<span class="text-xs font-mono text-slate-400">${escapeHtml(item.slug)}</span>`,
+        escapeHtml(item.source),
+        item.category ? escapeHtml(item.category) : "—",
+        (() => {
+          const safeUrl = safeExternalHref(item.url);
+          return safeUrl
+            ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noreferrer" class="text-sky-400 hover:text-sky-300 text-xs">open</a>`
+            : `<span class="text-slate-600">invalid-url</span>`;
+        })(),
+      ]);
+      res.send(`
+<div class="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
+  ${statCard("Intent", timedResult.routeIntent, "sky")}
+  ${statCard("Evidence", timedResult.evidence.length.toString(), "violet")}
+  ${statCard("Citation", `${Math.round(verification.citationCoverage * 100)}%`, "emerald")}
+  ${statCard("Unsupported", `${Math.round(verification.unsupportedClaimRate * 100)}%`, verification.unsupportedClaimRate > 0 ? "rose" : "emerald")}
+  ${statCard("Confidence", `${Math.round(timedResult.answer.confidence * 100)}%`, "amber")}
+  ${statCard("Abstained", timedResult.answer.abstained ? "yes" : "no", timedResult.answer.abstained ? "amber" : "emerald")}
+</div>
+<div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+  <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Planner Trace</h3>
+  <p class="text-xs text-slate-400">${escapeHtml(
+    timedResult.answer.plannerTrace?.subquestions.join(" | ") || "No planner trace for this run."
+  )}</p>
+</div>
+<div class="mb-3 text-xs text-slate-500">Answer latency: ${timedResult.answerLatencyMs}ms | Retrieval: ${timedResult.retrievalLatencyMs}ms | Rerank: ${timedResult.rerankLatencyMs}ms</div>
+${table(["Rank", "Title", "Slug", "Source", "Category", "Link"], evidenceRows)}
+`);
+    } catch (error) {
+      res.status(500).send(`<div class="text-rose-300 text-sm">Retrieval diagnostic failed: ${escapeHtml(String(error))}</div>`);
+    } finally {
+      retrievalDiagnosticsInFlight = Math.max(0, retrievalDiagnosticsInFlight - 1);
+    }
+  });
+
+  router.get("/evals", (_req: Request, res: Response) => {
+    res.send(page("Eval/Ops", renderEvalsPageShell(), "evals"));
+  });
+
+  router.get("/evals/fragment", (_req: Request, res: Response) => {
+    const baseline = readReportStatus("baseline");
+    const ops = readReportStatus("ops");
+    res.send(renderEvalsFragment(baseline, ops));
+  });
+
+  router.post("/evals/run-baseline", (req: Request, res: Response) => {
+    if (!allowAdminAction(req, "evals:run-baseline")) {
+      res.status(429).send("Too many eval run requests. Please retry shortly.");
+      return;
+    }
+    if (!isConfirmYes(req)) {
+      res.status(400).send("Pass ?confirm=yes to run baseline report.");
+      return;
+    }
+    spawnEvalScript("baseline");
+    res.status(204).end();
+  });
+
+  router.post("/evals/run-ops", (req: Request, res: Response) => {
+    if (!allowAdminAction(req, "evals:run-ops")) {
+      res.status(429).send("Too many eval run requests. Please retry shortly.");
+      return;
+    }
+    if (!isConfirmYes(req)) {
+      res.status(400).send("Pass ?confirm=yes to run ops report.");
+      return;
+    }
+    spawnEvalScript("ops");
+    res.status(204).end();
+  });
+
+  router.get("/controls", (_req: Request, res: Response) => {
+    res.send(page("Controls", renderControlsPage(getBeyondRagFlags()), "controls"));
+  });
+
+  router.get("/controls/log", (_req: Request, res: Response) => {
+    res.send(renderControlsLogFragment());
   });
 
   router.get("/search/results", (req: Request, res: Response) => {
@@ -779,8 +1447,19 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
     res.send(page("Scraper", renderScraperPage(), "scraper"));
   });
 
-  router.post("/scraper/trigger", (_req: Request, res: Response) => {
+  router.post("/scraper/trigger", (req: Request, res: Response) => {
+    if (!allowAdminAction(req, "scraper:trigger")) {
+      pushAdminAction("scraper:trigger", "error", "Rate limited high-frequency trigger attempts.");
+      res.status(429).send("Too many trigger attempts. Please retry shortly.");
+      return;
+    }
+    if (!isConfirmYes(req)) {
+      pushAdminAction("scraper:trigger", "error", "Rejected because confirm=yes was missing.");
+      res.status(400).send("Pass ?confirm=yes to trigger scraper.");
+      return;
+    }
     if (scraperRunner.status === "running") {
+      pushAdminAction("scraper:trigger", "error", "Rejected because scraper is already running.");
       res.status(409).send("Scraper is already running");
       return;
     }
@@ -794,6 +1473,7 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
         `Scraper entrypoint not found at "${entrypoint}". ` +
         `cwd="${process.cwd()}". Checked: ${checkedPaths.join(", ")}`;
       scraperRunner.addSystemMessage(details);
+      pushAdminAction("scraper:trigger", "error", details);
       res.status(500).send(details);
       return;
     }
@@ -802,6 +1482,7 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
       `Resolved scraper entrypoint: ${entrypoint} (source: ${source})`
     );
     void scraperRunner.run(entrypoint, env);
+    pushAdminAction("scraper:trigger", "ok", `Started run with entrypoint ${entrypoint}.`);
 
     res
       .status(204)
@@ -809,8 +1490,19 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
       .end();
   });
 
-  router.post("/scraper/kill", (_req: Request, res: Response) => {
+  router.post("/scraper/kill", (req: Request, res: Response) => {
+    if (!allowAdminAction(req, "scraper:kill")) {
+      pushAdminAction("scraper:kill", "error", "Rate limited high-frequency kill attempts.");
+      res.status(429).send("Too many kill attempts. Please retry shortly.");
+      return;
+    }
+    if (!isConfirmYes(req)) {
+      pushAdminAction("scraper:kill", "error", "Rejected because confirm=yes was missing.");
+      res.status(400).send("Pass ?confirm=yes to kill scraper.");
+      return;
+    }
     scraperRunner.kill();
+    pushAdminAction("scraper:kill", "ok", "Sent kill signal to scraper process.");
     res.status(204).end();
   });
 
@@ -829,34 +1521,61 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
     res.send(renderCheckpoints(checkpoints));
   });
 
-  router.post("/scraper/rebuild-fts", (_req: Request, res: Response) => {
+  router.post("/scraper/rebuild-fts", (req: Request, res: Response) => {
+    if (!allowAdminAction(req, "scraper:rebuild-fts")) {
+      pushAdminAction("scraper:rebuild-fts", "error", "Rate limited high-frequency rebuild attempts.");
+      res.status(429).send("Too many rebuild attempts. Please retry shortly.");
+      return;
+    }
+    if (!isConfirmYes(req)) {
+      pushAdminAction("scraper:rebuild-fts", "error", "Rejected because confirm=yes was missing.");
+      res.status(400).send("Pass ?confirm=yes to rebuild FTS.");
+      return;
+    }
     try {
       queries.rebuildFts();
+      pushAdminAction("scraper:rebuild-fts", "ok", "Triggered FTS rebuild.");
       res.status(204).end();
     } catch (err) {
+      pushAdminAction("scraper:rebuild-fts", "error", String(err));
       res.status(500).send(String(err));
     }
   });
 
   router.post("/scraper/wipe", (req: Request, res: Response) => {
     if ((req.query["confirm"] as string) !== "yes") {
+      pushAdminAction("scraper:wipe", "error", "Rejected because confirm=yes was missing.");
       res.status(400).send("Pass ?confirm=yes to confirm wipe");
       return;
     }
     try {
       queries.deleteAllDocs();
+      pushAdminAction("scraper:wipe", "ok", "Deleted all documents and reset checkpoints.");
       res.redirect("/admin/scraper");
     } catch (err) {
+      pushAdminAction("scraper:wipe", "error", String(err));
       res.status(500).send(String(err));
     }
   });
 
-  router.post("/scraper/errors/clear", (_req: Request, res: Response) => {
+  router.post("/scraper/errors/clear", (req: Request, res: Response) => {
+    if (!allowAdminAction(req, "scraper:clear-errors")) {
+      pushAdminAction("scraper:clear-errors", "error", "Rate limited high-frequency clear attempts.");
+      res.status(429).send("Too many clear attempts. Please retry shortly.");
+      return;
+    }
+    if (!isConfirmYes(req)) {
+      pushAdminAction("scraper:clear-errors", "error", "Rejected because confirm=yes was missing.");
+      res.status(400).send("Pass ?confirm=yes to clear scrape errors.");
+      return;
+    }
     try {
       queries.deleteScrapeErrors();
       const stats = queries.getStats();
+      pushAdminAction("scraper:clear-errors", "ok", "Cleared scrape error history.");
       res.send(renderRecentErrors(stats.recentErrors));
     } catch (err) {
+      pushAdminAction("scraper:clear-errors", "error", String(err));
       res.status(500).send(String(err));
     }
   });

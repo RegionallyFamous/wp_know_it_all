@@ -14,7 +14,11 @@ Operational runbook for keeping Wrangler reliable while refining retrieval quali
 3. Run operations SLO report:
    - `pnpm eval:ops`
 4. Review admin dashboard:
-   - `Dashboard` source breakdown and recent errors.
+   - `Health` page for ingest/growth/quality/ops stage checks.
+   - `Jobs` page for throughput, failures, and job-level diagnostics.
+   - `Retrieval` diagnostics for intent/evidence spot checks.
+   - `Eval/Ops` page for report status and rerun actions.
+   - `Controls` page for high-impact operational actions and feature-flag state.
    - `Quality` page for citation/support/abstain trends.
 
 ## Source Expansion Policy

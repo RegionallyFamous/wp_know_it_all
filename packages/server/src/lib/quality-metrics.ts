@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface QualityEvent {
@@ -64,9 +64,27 @@ export interface StoredQualityEvent extends QualityEvent {
   type: "quality_event";
 }
 
+let qualityCache:
+  | {
+      path: string;
+      mtimeMs: number;
+      size: number;
+      events: StoredQualityEvent[];
+    }
+  | null = null;
+
 export function readRecentQualityEvents(limit = 200): StoredQualityEvent[] {
   const path = qualityLogPath();
   if (!existsSync(path)) return [];
+  const stat = statSync(path);
+  if (
+    qualityCache &&
+    qualityCache.path === path &&
+    qualityCache.mtimeMs === stat.mtimeMs &&
+    qualityCache.size === stat.size
+  ) {
+    return qualityCache.events.slice(-limit);
+  }
   const lines = readFileSync(path, "utf-8")
     .split("\n")
     .map((line) => line.trim())
@@ -81,6 +99,12 @@ export function readRecentQualityEvents(limit = 200): StoredQualityEvent[] {
       // Skip malformed lines
     }
   }
+  qualityCache = {
+    path,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    events: parsed,
+  };
   return parsed;
 }
 

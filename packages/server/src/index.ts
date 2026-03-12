@@ -131,10 +131,18 @@ function createRateLimiter(
   maxRequests: number
 ): RequestHandler {
   const hits = new Map<string, { count: number; resetAt: number }>();
+  const cleanupEvery = Math.max(windowMs, 30_000);
+  let lastCleanupAt = 0;
   return (req, res, next) => {
     const ip = getClientIp(req);
     const key = `${keyPrefix}:${ip}`;
     const now = Date.now();
+    if (now - lastCleanupAt >= cleanupEvery) {
+      for (const [entryKey, entry] of hits.entries()) {
+        if (now > entry.resetAt) hits.delete(entryKey);
+      }
+      lastCleanupAt = now;
+    }
     const existing = hits.get(key);
 
     if (!existing || now > existing.resetAt) {

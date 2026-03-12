@@ -167,6 +167,16 @@ The server now checks common paths automatically and logs checked candidates in 
 
 Set Railway healthcheck to `/readyz` (already configured in `railway.toml`).
 
+### Admin operations console
+
+The admin now includes focused operational surfaces:
+
+- `/admin/health` — stage-by-stage pipeline health (ingest, growth, quality, ops gate).
+- `/admin/jobs` — job analytics, throughput, failure sources, and per-job detail views.
+- `/admin/retrieval` — retrieval diagnostics for intent/evidence/citation inspection.
+- `/admin/evals` — baseline/ops report status with one-click report triggers.
+- `/admin/controls` — centralized high-impact controls with feature-flag visibility and action log.
+
 ---
 
 ## Local Development

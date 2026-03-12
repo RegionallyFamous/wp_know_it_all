@@ -220,7 +220,8 @@ function sanitizeFtsQuery(raw: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9_]+/g, " ")
     .split(/\s+/)
-    .filter((w) => w.length > 1 && !stopWords.has(w));
+    .filter((w) => w.length > 1 && !stopWords.has(w))
+    .slice(0, 12); // Cap token count to keep FTS queries performant under long inputs.
   if (words.length === 0) return '""';
   if (words.length === 1) return words[0]!;
   // Phrase match OR token OR strategy gives better recall for natural-language queries.

@@ -46,6 +46,28 @@ export interface DocSearchResult {
   url: string;
 }
 
+export interface ScrapeErrorRow {
+  id: number;
+  job_id: number;
+  source_type: string;
+  url: string | null;
+  error_msg: string;
+  created_at: number;
+}
+
+export interface JobAnalytics {
+  sampledJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  avgDurationSec: number;
+  p50DurationSec: number;
+  p95DurationSec: number;
+  avgDocsPerMin: number;
+  docsLast24h: number;
+  docsLast7d: number;
+  topFailingSources: Array<{ source_type: string; count: number }>;
+}
+
 export function buildAdminQueries(db: Database.Database) {
   const stmtTotalDocs = db.prepare<[], { total: number }>(
     `SELECT COUNT(*) AS total FROM documents`
@@ -115,6 +137,39 @@ export function buildAdminQueries(db: Database.Database) {
     `SELECT COUNT(*) AS total FROM documents`
   );
   const stmtDeleteScrapeErrors = db.prepare(`DELETE FROM scrape_errors`);
+  const stmtTopFailingSources = db.prepare<[number], { source_type: string; count: number }>(
+    `SELECT source_type, COUNT(*) AS count
+     FROM scrape_errors
+     WHERE created_at >= unixepoch() - ?
+     GROUP BY source_type
+     ORDER BY count DESC
+     LIMIT 10`
+  );
+  const stmtDocGrowth = db.prepare<[number], { count: number }>(
+    `SELECT COUNT(*) AS count
+     FROM documents
+     WHERE indexed_at >= unixepoch() - ?`
+  );
+  const stmtJobById = db.prepare<[number], JobRow>(
+    `SELECT id, started_at, completed_at, status, total_docs, total_errors, summary
+     FROM scrape_jobs
+     WHERE id = ?
+     LIMIT 1`
+  );
+  const stmtPreviousJob = db.prepare<[number], JobRow>(
+    `SELECT id, started_at, completed_at, status, total_docs, total_errors, summary
+     FROM scrape_jobs
+     WHERE id < ?
+     ORDER BY id DESC
+     LIMIT 1`
+  );
+  const stmtErrorsByJob = db.prepare<[number], ScrapeErrorRow>(
+    `SELECT id, job_id, source_type, url, error_msg, created_at
+     FROM scrape_errors
+     WHERE job_id = ?
+     ORDER BY created_at DESC
+     LIMIT 200`
+  );
 
   return {
     getStats(): AdminStats {
@@ -130,8 +185,61 @@ export function buildAdminQueries(db: Database.Database) {
       return stmtJobs.all(limit);
     },
 
+    getJobById(jobId: number): JobRow | null {
+      return stmtJobById.get(jobId) ?? null;
+    },
+
+    getPreviousJob(jobId: number): JobRow | null {
+      return stmtPreviousJob.get(jobId) ?? null;
+    },
+
     getCheckpoints(): CheckpointRow[] {
       return stmtCheckpoints.all();
+    },
+
+    getErrorsForJob(jobId: number): ScrapeErrorRow[] {
+      return stmtErrorsByJob.all(jobId);
+    },
+
+    getJobAnalytics(sampleSize = 50): JobAnalytics {
+      const jobs = stmtJobs.all(sampleSize);
+      const completed = jobs.filter((job) => job.status === "completed" && job.completed_at != null);
+      const failed = jobs.filter((job) => job.status === "failed");
+      const durationsSec = completed
+        .map((job) => (job.completed_at! - job.started_at))
+        .filter((seconds) => Number.isFinite(seconds) && seconds > 0)
+        .sort((a, b) => a - b);
+      const percentile = (ratio: number): number => {
+        if (durationsSec.length === 0) return 0;
+        const index = Math.min(durationsSec.length - 1, Math.floor((durationsSec.length - 1) * ratio));
+        return durationsSec[index] ?? 0;
+      };
+      const docsPerMin = completed
+        .map((job) => {
+          const durationMin = (job.completed_at! - job.started_at) / 60;
+          if (durationMin <= 0) return 0;
+          return job.total_docs / durationMin;
+        })
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const avg = (values: number[]): number =>
+        values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+
+      const docsLast24h = stmtDocGrowth.get(24 * 60 * 60)!.count;
+      const docsLast7d = stmtDocGrowth.get(7 * 24 * 60 * 60)!.count;
+      const topFailingSources = stmtTopFailingSources.all(7 * 24 * 60 * 60);
+
+      return {
+        sampledJobs: jobs.length,
+        completedJobs: completed.length,
+        failedJobs: failed.length,
+        avgDurationSec: avg(durationsSec),
+        p50DurationSec: percentile(0.5),
+        p95DurationSec: percentile(0.95),
+        avgDocsPerMin: avg(docsPerMin),
+        docsLast24h,
+        docsLast7d,
+        topFailingSources,
+      };
     },
 
     searchDocs(

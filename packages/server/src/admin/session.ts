@@ -3,14 +3,23 @@ import type { Request, Response, NextFunction } from "express";
 
 const SESSION_COOKIE = "wp_admin_sid";
 const TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+const IDLE_TTL_MS = Number.parseInt(process.env["ADMIN_SESSION_IDLE_TTL_MS"] ?? "", 10) || 60 * 60 * 1000; // 1 hour
+const COOKIE_REFRESH_MS =
+  Number.parseInt(process.env["ADMIN_SESSION_COOKIE_REFRESH_MS"] ?? "", 10) || 15 * 60 * 1000; // 15 min
 
 interface Session {
   userId: string;
   expiresAt: number;
+  lastSeenAt: number;
+  lastCookieRefreshAt: number;
 }
 
 // In-memory session store — fine for personal use
 const sessions = new Map<string, Session>();
+
+function sessionKey(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 // Sweep expired sessions every hour
 setInterval(() => {
@@ -22,12 +31,18 @@ setInterval(() => {
 
 export function createSession(userId: string): string {
   const token = randomBytes(32).toString("hex");
-  sessions.set(token, { userId, expiresAt: Date.now() + TTL_MS });
+  const now = Date.now();
+  sessions.set(sessionKey(token), {
+    userId,
+    expiresAt: now + TTL_MS,
+    lastSeenAt: now,
+    lastCookieRefreshAt: now,
+  });
   return token;
 }
 
 export function destroySession(token: string): void {
-  sessions.delete(token);
+  sessions.delete(sessionKey(token));
 }
 
 export function setSessionCookie(res: Response, token: string): void {
@@ -54,12 +69,21 @@ export function requireAdminAuth(
     res.redirect("/admin/login");
     return;
   }
-  const session = sessions.get(token);
-  if (!session || Date.now() > session.expiresAt) {
-    sessions.delete(token ?? "");
+  const key = sessionKey(token);
+  const session = sessions.get(key);
+  const now = Date.now();
+  const expired = !session || now > session.expiresAt;
+  const idleExpired = session ? now - session.lastSeenAt > IDLE_TTL_MS : false;
+  if (expired || idleExpired) {
+    sessions.delete(key);
     clearSessionCookie(res);
     res.redirect("/admin/login");
     return;
+  }
+  session.lastSeenAt = now;
+  if (now - session.lastCookieRefreshAt >= COOKIE_REFRESH_MS) {
+    session.lastCookieRefreshAt = now;
+    setSessionCookie(res, token);
   }
   next();
 }
