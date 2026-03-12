@@ -103,6 +103,15 @@ export function applySchema(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_scrape_errors_job ON scrape_errors(job_id);
     CREATE INDEX IF NOT EXISTS idx_scrape_errors_created_at ON scrape_errors(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS project_context_memory (
+      project_key        TEXT PRIMARY KEY,
+      wp_version         TEXT,
+      stack_summary      TEXT,
+      coding_conventions TEXT,
+      risk_profile       TEXT CHECK (risk_profile IN ('low', 'moderate', 'high') OR risk_profile IS NULL),
+      updated_at         INTEGER NOT NULL DEFAULT (unixepoch())
+    );
   `);
 }
 

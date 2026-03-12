@@ -1,14 +1,18 @@
 import { z } from "zod";
 import type { DocumentRow, SearchResult } from "@wp-know-it-all/shared";
+import type Database from "better-sqlite3";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { buildQueries } from "../db/queries.js";
-import { routeQuery } from "../lib/query-router.js";
+import { routeQuery, type QueryIntent } from "../lib/query-router.js";
 import { rerankCandidates, type RetrievalCandidate } from "../lib/rerank.js";
 import { expandQuery } from "../lib/query-expansion.js";
 import { GroundedAnswerSchema, type GroundedAnswer } from "../lib/answer-schema.js";
 import { verifyGroundedAnswer } from "../lib/answer-verifier.js";
 import { logQualityEvent } from "../lib/quality-metrics.js";
 import { applyWranglerPersona } from "../lib/persona.js";
+import { getBeyondRagFlags } from "../lib/feature-flags.js";
+import { buildProjectMemoryStore } from "../lib/project-memory.js";
+import { validateWordPressCode } from "../validation/engine.js";
 import {
   critiqueWithOllama,
   isOllamaAnsweringEnabled,
@@ -51,6 +55,30 @@ export const answerQuestionInputSchema = {
     .max(12)
     .default(6)
     .describe("Number of evidence documents to include."),
+  mode: z
+    .enum(["answer", "implementation"])
+    .default("answer")
+    .describe("Use implementation mode when validating concrete code guidance."),
+  candidate_code: z
+    .string()
+    .max(50_000)
+    .optional()
+    .describe("Optional PHP implementation snippet for validation and revise loops."),
+  project_key: z
+    .string()
+    .max(120)
+    .optional()
+    .describe("Optional memory key for a project or repository."),
+  wp_version: z.string().max(32).optional().describe("Optional WordPress version context."),
+  stack_summary: z
+    .string()
+    .max(500)
+    .optional()
+    .describe("Optional stack summary (PHP version, hosting, plugin architecture, etc.)."),
+  risk_profile: z
+    .enum(["low", "moderate", "high"])
+    .optional()
+    .describe("Optional risk profile used to tighten policy behavior."),
 };
 
 function documentToSearchResult(row: DocumentRow): SearchResult {
@@ -242,7 +270,7 @@ function inferAssumptions(question: string, evidence: SearchResult[]): string[] 
 }
 
 function formatReasoningSteps(
-  routeIntent: ReturnType<typeof routeQuery>["intent"],
+  routeIntent: QueryIntent,
   evidenceCount: number,
   subqueries: string[]
 ): string[] {
@@ -255,6 +283,44 @@ function formatReasoningSteps(
   }
   steps.push(`Reranked and deduplicated evidence down to ${evidenceCount} high-priority documents.`);
   return steps;
+}
+
+function createPlannerTrace(
+  question: string,
+  routeIntent: QueryIntent,
+  decompositionQueries: string[],
+  mode: "answer" | "implementation",
+  plannerEnabled: boolean
+): NonNullable<GroundedAnswer["plannerTrace"]> | undefined {
+  if (!plannerEnabled) return undefined;
+  const retrievalGoals = [
+    "Find WordPress-first canonical references.",
+    "Collect at least one corroborating source for each main claim.",
+  ];
+  if (routeIntent === "security_review") {
+    retrievalGoals.push("Prioritize security-sensitive APIs and policy docs.");
+  }
+  if (mode === "implementation") {
+    retrievalGoals.push("Gather implementation constraints before validating code.");
+  }
+
+  const toolHints = ["search_wordpress_docs", "get_wordpress_doc"];
+  if (mode === "implementation") {
+    toolHints.push("validate_wordpress_code");
+  }
+
+  const normalizedQuestion = question.trim();
+  const subquestions =
+    decompositionQueries.length > 0
+      ? decompositionQueries.map((subquery) => `How does "${subquery}" affect this answer?`)
+      : [normalizedQuestion];
+
+  return {
+    intent: routeIntent,
+    retrievalGoals,
+    subquestions,
+    toolHints,
+  };
 }
 
 function buildCitationsFromEvidence(evidence: SearchResult[]): GroundedAnswer["citations"] {
@@ -298,7 +364,7 @@ function pickCitationsForClaims(
 
 function calibratePreVerificationConfidence(
   evidence: SearchResult[],
-  routeIntent: ReturnType<typeof routeQuery>["intent"],
+  routeIntent: QueryIntent,
   assumptions: string[]
 ): number {
   const uniqueSources = new Set(evidence.map((e) => e.source)).size;
@@ -329,8 +395,10 @@ function buildAbstainedAnswer(question: string, reason: string): GroundedAnswer 
 function buildDeterministicAnswer(
   question: string,
   evidence: SearchResult[],
-  routeIntent: ReturnType<typeof routeQuery>["intent"],
-  decompositionQueries: string[]
+  routeIntent: QueryIntent,
+  decompositionQueries: string[],
+  mode: "answer" | "implementation",
+  plannerEnabled: boolean
 ): GroundedAnswer {
   const evidenceById = buildEvidenceMap(evidence);
   const assumptions = [
@@ -365,6 +433,7 @@ function buildDeterministicAnswer(
     citations,
     reasoningSteps,
     assumptions,
+    plannerTrace: createPlannerTrace(question, routeIntent, decompositionQueries, mode, plannerEnabled),
     confidence,
     abstained: false,
   });
@@ -377,6 +446,7 @@ export async function buildGroundedAnswer(
     category?: string;
     doc_type?: string;
     top_k: number;
+    mode: "answer" | "implementation";
   }
 ): Promise<{
   answer: GroundedAnswer;
@@ -384,11 +454,12 @@ export async function buildGroundedAnswer(
   synthesisEngine: "deterministic" | "ollama";
   criticUsed: boolean;
   criticAccepted: boolean;
-  routeIntent: "exact_symbol" | "workflow" | "conceptual";
+  routeIntent: QueryIntent;
   retrievalLatencyMs: number;
   rerankLatencyMs: number;
   answerLatencyMs: number;
 }> {
+  const flags = getBeyondRagFlags();
   const startedAt = Date.now();
   const route = routeQuery(params.question);
   const candidates: RetrievalCandidate[] = [];
@@ -408,7 +479,9 @@ export async function buildGroundedAnswer(
   pushCandidates(baseResults, "bm25");
 
   const decompositionQueries =
-    route.intent === "exact_symbol" ? [] : decomposeConceptualQuery(route.normalizedQuery);
+    flags.plannerRouter && route.intent !== "exact_symbol"
+      ? decomposeConceptualQuery(route.normalizedQuery)
+      : [];
   for (const expanded of decompositionQueries) {
     const decomposedResults = queries.search({
       query: expanded,
@@ -517,14 +590,16 @@ export async function buildGroundedAnswer(
     params.question,
     evidence,
     route.intent,
-    decompositionQueries
+    decompositionQueries,
+    params.mode,
+    flags.plannerRouter
   );
   let synthesisEngine: "deterministic" | "ollama" = "deterministic";
   let criticUsed = false;
   let criticAccepted = false;
   const evidenceById = buildEvidenceMap(evidence);
 
-  if (isOllamaAnsweringEnabled()) {
+  if (flags.verifierCritic && isOllamaAnsweringEnabled()) {
     const ollamaSynth = await synthesizeWithOllama(params.question, evidence);
     if (ollamaSynth) {
       const citations = buildCitationsFromEvidence(evidence);
@@ -546,6 +621,13 @@ export async function buildGroundedAnswer(
         citations: filteredCitations.length > 0 ? filteredCitations : citations,
         reasoningSteps: formatReasoningSteps(route.intent, evidence.length, decompositionQueries),
         assumptions: inferAssumptions(params.question, evidence),
+        plannerTrace: createPlannerTrace(
+          params.question,
+          route.intent,
+          decompositionQueries,
+          params.mode,
+          flags.plannerRouter
+        ),
         confidence: ollamaSynth.confidence,
         abstained: ollamaSynth.abstained,
         abstainReason: ollamaSynth.abstainReason,
@@ -619,6 +701,28 @@ export function formatGroundedAnswerOutput(
     verification.reasons.length > 0
       ? `\n## Verification Warnings\n${verification.reasons.map((r) => `- ${r}`).join("\n")}\n`
       : "";
+  const plannerLines =
+    answer.plannerTrace && answer.plannerTrace.subquestions.length > 0
+      ? [
+          `Intent: ${answer.plannerTrace.intent}`,
+          ...answer.plannerTrace.subquestions.map((q) => `- ${q}`),
+        ].join("\n")
+      : "- Planner trace not captured";
+  const validationLines = answer.validation
+    ? [
+        `Executed: ${answer.validation.executed ? "yes" : "no"}`,
+        `Passed: ${answer.validation.passed ? "yes" : "no"}`,
+        answer.validation.score != null ? `Score: ${answer.validation.score}/100` : null,
+        answer.validation.summary ? `Summary: ${answer.validation.summary}` : null,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n")
+    : "Executed: no";
+  const policyLines = answer.policy
+    ? [`Violated: ${answer.policy.violated ? "yes" : "no"}`, ...answer.policy.reasons.map((r) => `- ${r}`)]
+        .join("\n")
+        .trim()
+    : "Violated: no";
 
   const body = [
     "## Grounded Answer",
@@ -631,6 +735,15 @@ export function formatGroundedAnswerOutput(
     "",
     "## Assumptions",
     assumptionLines,
+    "",
+    "## Planner Trace",
+    plannerLines,
+    "",
+    "## Validation Status",
+    validationLines,
+    "",
+    "## Policy Status",
+    policyLines,
     "",
     "## Implementation Guardrails",
     "- Fetch full source docs with `get_wordpress_doc` before coding production changes.",
@@ -649,8 +762,10 @@ export function formatGroundedAnswerOutput(
 
 export function registerAnswerQuestionTool(
   server: McpServer,
-  queries: ReturnType<typeof buildQueries>
+  queries: ReturnType<typeof buildQueries>,
+  db: Database.Database
 ): void {
+  const memoryStore = buildProjectMemoryStore(db);
   server.registerTool(
     "answer_wordpress_question",
     {
@@ -658,16 +773,50 @@ export function registerAnswerQuestionTool(
         "Answer a WordPress question with grounded evidence from the WordPress-first corpus (plus adjacent PHP/Node/Web references). Returns structured claims and citations, and abstains when confidence is low.",
       inputSchema: answerQuestionInputSchema,
     },
-    async ({ question, category, doc_type, top_k }) => {
-      const result = await buildGroundedAnswer(queries, { question, category, doc_type, top_k });
-      const verification = verifyGroundedAnswer(result.answer, queries);
+    async ({
+      question,
+      category,
+      doc_type,
+      top_k,
+      mode,
+      candidate_code,
+      project_key,
+      wp_version,
+      stack_summary,
+      risk_profile,
+    }) => {
+      const flags = getBeyondRagFlags();
+      const normalizedCandidateCode = candidate_code?.trim();
+      const memoryRiskProfile = risk_profile ?? null;
+      if (flags.memoryPolicy && project_key) {
+        memoryStore.upsert({
+          projectKey: project_key,
+          wpVersion: wp_version,
+          stackSummary: stack_summary,
+          riskProfile: memoryRiskProfile,
+        });
+      }
+      const projectMemory = flags.memoryPolicy && project_key ? memoryStore.get(project_key) : null;
+      const effectiveRiskProfile = (memoryRiskProfile ?? projectMemory?.riskProfile ?? "moderate") as
+        | "low"
+        | "moderate"
+        | "high";
+
+      const result = await buildGroundedAnswer(queries, {
+        question,
+        category,
+        doc_type,
+        top_k,
+        mode,
+      });
+      const initialVerification = verifyGroundedAnswer(result.answer, queries);
 
       const finalAnswerBase =
-        verification.ok || result.answer.abstained
+        !flags.verifierCritic || initialVerification.ok || result.answer.abstained
           ? result.answer
           : buildAbstainedAnswer(
               question,
-              `Verification failed: ${verification.reasons.join(" | ")}`
+              `Verification failed: ${initialVerification.reasons.join(" | ")}`
             );
       const calibratedConfidence = finalAnswerBase.abstained
         ? Math.min(0.35, finalAnswerBase.confidence)
@@ -675,10 +824,10 @@ export function registerAnswerQuestionTool(
             0.15,
             Math.min(
               0.98,
-            0.32 +
-                verification.averageSupportScore * 0.35 +
-                verification.citationCoverage * 0.2 +
-                (1 - verification.unsupportedClaimRate) * 0.1 +
+              0.32 +
+                initialVerification.averageSupportScore * 0.35 +
+                initialVerification.citationCoverage * 0.2 +
+                (1 - initialVerification.unsupportedClaimRate) * 0.1 +
                 evidenceAgreementScore(result.evidence) * 0.08 +
                 (result.routeIntent === "exact_symbol" ? 0.05 : 0)
             )
@@ -688,33 +837,129 @@ export function registerAnswerQuestionTool(
         confidence: calibratedConfidence,
       };
 
+      const shouldRunValidation =
+        flags.toolExecutionChain && mode === "implementation" && Boolean(normalizedCandidateCode);
+      const validationResult = shouldRunValidation
+        ? validateWordPressCode(normalizedCandidateCode!)
+        : undefined;
+      const blockingIssueCount = validationResult
+        ? validationResult.issues.filter((issue) => issue.severity === "error").length
+        : 0;
+
+      const policyReasons: string[] = [];
+      const hasUncitedClaim = finalAnswer.claims.some((claim) => claim.citationDocIds.length === 0);
+      if (flags.memoryPolicy && hasUncitedClaim) {
+        policyReasons.push("Answer includes uncited behavioral claims.");
+      }
+      if (
+        mode === "implementation" &&
+        shouldRunValidation &&
+        !validationResult?.passed
+      ) {
+        policyReasons.push(
+          "Implementation mode requires a passing validation result before production-ready status."
+        );
+      }
+      if (
+        flags.memoryPolicy &&
+        !finalAnswer.abstained &&
+        initialVerification.reasons.some((reason) => reason.toLowerCase().includes("conflict"))
+      ) {
+        policyReasons.push("Evidence conflict unresolved; forced abstention required by policy.");
+      }
+      if (flags.memoryPolicy && effectiveRiskProfile === "high" && !finalAnswer.abstained) {
+        if (initialVerification.citationCoverage < 1) {
+          policyReasons.push("High-risk profile requires full citation coverage.");
+        }
+        if (initialVerification.unsupportedClaimRate > 0) {
+          policyReasons.push("High-risk profile allows zero unsupported claims.");
+        }
+      }
+
+      const policyViolated = policyReasons.length > 0;
+      const needsForcedAbstain =
+        policyReasons.some((reason) => reason.toLowerCase().includes("forced abstention")) ||
+        (mode === "implementation" && shouldRunValidation && !validationResult?.passed);
+
+      const postPolicyAnswer: GroundedAnswer =
+        needsForcedAbstain
+          ? {
+              ...buildAbstainedAnswer(question, policyReasons.join(" | ")),
+              plannerTrace: finalAnswer.plannerTrace,
+            }
+          : {
+              ...finalAnswer,
+              assumptions: [
+                ...(finalAnswer.assumptions ?? []),
+                ...(projectMemory?.wpVersion
+                  ? [`Project memory: targeting WordPress ${projectMemory.wpVersion}.`]
+                  : []),
+                ...(projectMemory?.stackSummary
+                  ? [`Project memory: ${projectMemory.stackSummary}.`]
+                  : []),
+                `Risk profile: ${effectiveRiskProfile}.`,
+              ],
+            };
+
+      const answerWithContractsBase: GroundedAnswer = {
+        ...postPolicyAnswer,
+        implementationReady:
+          mode === "implementation"
+            ? Boolean(shouldRunValidation && validationResult?.passed && !policyViolated)
+            : false,
+        policy: {
+          violated: policyViolated,
+          reasons: policyReasons,
+        },
+      };
+      const answerWithContracts: GroundedAnswer =
+        mode === "implementation"
+          ? {
+              ...answerWithContractsBase,
+              validation: {
+                executed: Boolean(shouldRunValidation),
+                passed: validationResult?.passed ?? false,
+                score: validationResult?.score,
+                summary: validationResult?.summary,
+                blockingIssueCount,
+              },
+            }
+          : answerWithContractsBase;
+      const finalVerification = verifyGroundedAnswer(answerWithContracts, queries);
+
       logQualityEvent({
         tool: "answer_wordpress_question",
         question,
+        routeIntent: result.routeIntent,
         synthesisEngine: result.synthesisEngine,
         criticUsed: result.criticUsed,
         criticAccepted: result.criticAccepted,
+        plannerEnabled: flags.plannerRouter,
+        toolchainEnabled: flags.toolExecutionChain,
+        policyEnabled: flags.memoryPolicy,
         retrievalLatencyMs: result.retrievalLatencyMs,
         rerankLatencyMs: result.rerankLatencyMs,
         answerLatencyMs: result.answerLatencyMs,
         evidenceCount: result.evidence.length,
-        citationCoverage: verification.citationCoverage,
-        unsupportedClaimRate: verification.unsupportedClaimRate,
-        averageSupportScore: verification.averageSupportScore,
-        abstained: finalAnswer.abstained,
-        abstainReason: finalAnswer.abstainReason,
-        confidence: finalAnswer.confidence,
+        citationCoverage: finalVerification.citationCoverage,
+        unsupportedClaimRate: finalVerification.unsupportedClaimRate,
+        averageSupportScore: finalVerification.averageSupportScore,
+        abstained: answerWithContracts.abstained,
+        abstainReason: answerWithContracts.abstainReason,
+        confidence: answerWithContracts.confidence,
+        policyViolated,
+        policyReasons,
       });
 
       return {
         content: [
           {
             type: "text" as const,
-            text: formatGroundedAnswerOutput(finalAnswer, verification),
+            text: formatGroundedAnswerOutput(answerWithContracts, finalVerification),
           },
           {
             type: "text" as const,
-            text: `\n\n## Structured JSON\n\`\`\`json\n${JSON.stringify(finalAnswer, null, 2)}\n\`\`\``,
+            text: `\n\n## Structured JSON\n\`\`\`json\n${JSON.stringify(answerWithContracts, null, 2)}\n\`\`\``,
           },
         ],
       };

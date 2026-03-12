@@ -252,7 +252,7 @@ function createMcpServer(): McpServer {
   registerGetDocTool(server, queries);
   registerLookupTool(server, queries);
   registerValidateTool(server);
-  registerAnswerQuestionTool(server, queries);
+  registerAnswerQuestionTool(server, queries, db);
   registerResources(server, queries);
   registerPrompts(server);
 

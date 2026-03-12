@@ -44,3 +44,8 @@ jobs:
 
       - name: Canary eval gate
         run: pnpm eval:canary
+
+      - name: Ops SLO report (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: pnpm eval:ops
+        continue-on-error: true

@@ -52,3 +52,20 @@ Default is `core` for all toggles.
 - `eval:ops` passes.
 - No unresolved high-severity scraper source failures.
 - WordPress-first relevance remains stable in manual spot checks.
+
+## Beyond-RAG Feature Flags (Rollback Controls)
+
+- `FEATURE_PLANNER_ROUTER=0|1`
+- `FEATURE_VERIFIER_CRITIC=0|1`
+- `FEATURE_TOOL_EXECUTION_CHAIN=0|1`
+- `FEATURE_MEMORY_POLICY=0|1`
+
+Use `0` to rollback a phase without redeploying older code.
+
+## Stop/Go Criteria by Phase
+
+- **Phase 1 (Planner/Router):** stop if planner intent accuracy regresses below eval threshold.
+- **Phase 2 (Verifier/Critic):** stop if unsupported claim rate worsens versus baseline.
+- **Phase 3 (Toolchain):** stop if implementation answers skip validation contract.
+- **Phase 4 (Memory/Policy):** stop if policy violations rise or abstention overreach appears.
+- **Phase 5 (Governance):** stop if CI quality/canary gates fail, ops SLO report regresses on production telemetry, or trend turns negative.

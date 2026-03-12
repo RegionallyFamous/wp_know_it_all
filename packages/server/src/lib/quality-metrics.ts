@@ -4,9 +4,13 @@ import { dirname, join } from "node:path";
 export interface QualityEvent {
   tool: string;
   question: string;
+  routeIntent?: string;
   synthesisEngine?: "deterministic" | "ollama";
   criticUsed?: boolean;
   criticAccepted?: boolean;
+  plannerEnabled?: boolean;
+  toolchainEnabled?: boolean;
+  policyEnabled?: boolean;
   retrievalLatencyMs: number;
   rerankLatencyMs: number;
   answerLatencyMs: number;
@@ -17,6 +21,8 @@ export interface QualityEvent {
   abstained: boolean;
   abstainReason?: string;
   confidence: number;
+  policyViolated?: boolean;
+  policyReasons?: string[];
 }
 
 function qualityLogPath(): string {
@@ -50,6 +56,7 @@ export interface QualitySummary {
   avgConfidence: number;
   abstainRate: number;
   ollamaUsageRate: number;
+  policyViolationRate: number;
 }
 
 export interface StoredQualityEvent extends QualityEvent {
@@ -87,6 +94,7 @@ export function summarizeQualityEvents(events: StoredQualityEvent[]): QualitySum
       avgConfidence: 0,
       abstainRate: 0,
       ollamaUsageRate: 0,
+      policyViolationRate: 0,
     };
   }
   const totalEvents = events.length;
@@ -95,6 +103,7 @@ export function summarizeQualityEvents(events: StoredQualityEvent[]): QualitySum
   const avg = (value: number): number => value / totalEvents;
   const abstainRate = avg(events.filter((event) => event.abstained).length);
   const ollamaUsageRate = avg(events.filter((event) => event.synthesisEngine === "ollama").length);
+  const policyViolationRate = avg(events.filter((event) => event.policyViolated).length);
   return {
     totalEvents,
     avgCitationCoverage: avg(sum("citationCoverage")),
@@ -103,5 +112,6 @@ export function summarizeQualityEvents(events: StoredQualityEvent[]): QualitySum
     avgConfidence: avg(sum("confidence")),
     abstainRate,
     ollamaUsageRate,
+    policyViolationRate,
   };
 }

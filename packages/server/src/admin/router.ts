@@ -603,8 +603,13 @@ function renderQualityPage(): string {
         hour12: false,
       }),
       escapeHtml(event.tool),
+      event.routeIntent ? escapeHtml(event.routeIntent) : "n/a",
       event.synthesisEngine ? escapeHtml(event.synthesisEngine) : "deterministic",
       event.abstained ? `<span class="text-amber-400">yes</span>` : "no",
+      event.policyViolated ? `<span class="text-rose-400">yes</span>` : "no",
+      event.policyReasons && event.policyReasons.length > 0
+        ? escapeHtml(event.policyReasons.slice(0, 2).join(" | "))
+        : "—",
       `${Math.round(event.citationCoverage * 100)}%`,
       `${Math.round((event.averageSupportScore ?? 0) * 100)}%`,
       `${Math.round(event.confidence * 100)}%`,
@@ -616,15 +621,16 @@ function renderQualityPage(): string {
   <h1 class="text-2xl font-bold text-slate-100">Quality</h1>
   <p class="text-sm text-slate-500 mt-1">Wrangler answer quality and reliability telemetry</p>
 </div>
-<div class="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
+<div class="grid grid-cols-2 lg:grid-cols-7 gap-4 mb-8">
   ${statCard("Events", summary.totalEvents.toLocaleString(), "sky")}
   ${statCard("Citation", `${Math.round(summary.avgCitationCoverage * 100)}%`, "emerald")}
   ${statCard("Support", `${Math.round(summary.avgSupportScore * 100)}%`, "violet")}
   ${statCard("Unsupported", `${Math.round(summary.avgUnsupportedClaimRate * 100)}%`, "rose")}
   ${statCard("Abstain", `${Math.round(summary.abstainRate * 100)}%`, "amber")}
+  ${statCard("Policy Viol.", `${Math.round(summary.policyViolationRate * 100)}%`, "rose")}
   ${statCard("Ollama Use", `${Math.round(summary.ollamaUsageRate * 100)}%`, "slate")}
 </div>
-${table(["Timestamp", "Tool", "Engine", "Abstained", "Citation", "Support", "Confidence", "Latency"], recentRows)}
+${table(["Timestamp", "Tool", "Intent", "Engine", "Abstained", "Policy", "Policy Reasons", "Citation", "Support", "Confidence", "Latency"], recentRows)}
 `;
 }
 

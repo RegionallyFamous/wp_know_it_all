@@ -1,18 +1,18 @@
-{"question":"How do I enqueue a script in WordPress?","expectedSlugs":["wp_enqueue_script"],"shouldAbstain":false}
-{"question":"Which hook runs when saving a post?","expectedSlugs":["save_post"],"shouldAbstain":false}
-{"question":"How can I register a custom post type?","expectedSlugs":["register_post_type"],"shouldAbstain":false}
-{"question":"How do I verify a nonce in form handling?","expectedSlugs":["wp_verify_nonce","check_admin_referer"],"shouldAbstain":false}
-{"question":"How can I add a custom REST API endpoint?","expectedSlugs":["register_rest_route"],"shouldAbstain":false}
-{"question":"How do WordPress Playground blueprints work?","expectedSlugs":["wp-github-playground-blueprints","wp-github-wordpress-develop-readme","register_post_type","register_rest_route"],"shouldAbstain":false}
-{"question":"Where can I find wordpress-develop setup guidance?","expectedSlugs":["wp-github-wordpress-develop-readme","wp-github-playground-blueprints","wp_enqueue_script","register_post_type"],"shouldAbstain":false}
-{"question":"Which RFC defines modern HTTP semantics?","expectedSlugs":["ietf-rfc-rfc-9110-http-semantics"],"shouldAbstain":false}
-{"question":"In Python, what module parses URLs?","expectedSlugs":["python-library-urllib-parse"],"shouldAbstain":false}
-{"question":"How do I parse URLs in Python for a WP migration tool?","expectedSlugs":["python-library-urllib-parse"],"shouldAbstain":false}
-{"question":"Which Node.js module is used for filesystem operations?","expectedSlugs":["nodejs-fs"],"shouldAbstain":false}
-{"question":"How does the Fetch API perform HTTP requests in browsers?","expectedSlugs":["mdn-web-api-fetch-api"],"shouldAbstain":false}
-{"question":"In PHP, which function finds substring position in a string?","expectedSlugs":["php-function-strpos"],"shouldAbstain":false}
-{"question":"What's the best way to do quantum database teleport in WordPress core?","expectedSlugs":[],"shouldAbstain":true}
-{"question":"Does WordPress have a function called register_quantum_post_type?","expectedSlugs":[],"shouldAbstain":true}
-{"question":"What does quantum_flargle_wp_do_magic do?","expectedSlugs":[],"shouldAbstain":true}
-{"question":"Should I always disable nonce checks for better performance in WordPress?","expectedSlugs":[],"shouldAbstain":true}
-{"question":"Is there an official WordPress API called wp_make_teleport_request?","expectedSlugs":[],"shouldAbstain":true}
+{"question":"How do I enqueue a script in WordPress?","expectedSlugs":["wp_enqueue_script"],"shouldAbstain":false,"expectedIntent":"workflow"}
+{"question":"Which hook runs when saving a post?","expectedSlugs":["save_post"],"shouldAbstain":false,"expectedIntent":"conceptual"}
+{"question":"How can I register a custom post type?","expectedSlugs":["register_post_type"],"shouldAbstain":false,"expectedIntent":"workflow"}
+{"question":"How do I verify a nonce in form handling?","expectedSlugs":["wp_verify_nonce","check_admin_referer"],"shouldAbstain":false,"expectedIntent":"security_review"}
+{"question":"How can I add a custom REST API endpoint?","expectedSlugs":["register_rest_route"],"shouldAbstain":false,"expectedIntent":"workflow"}
+{"question":"How do WordPress Playground blueprints work?","expectedSlugs":["wp-github-playground-blueprints","wp-github-wordpress-develop-readme","register_post_type","register_rest_route"],"shouldAbstain":false,"expectedIntent":"workflow"}
+{"question":"Where can I find wordpress-develop setup guidance?","expectedSlugs":["wp-github-wordpress-develop-readme","wp-github-playground-blueprints","wp_enqueue_script","register_post_type"],"shouldAbstain":false,"expectedIntent":"conceptual"}
+{"question":"Which RFC defines modern HTTP semantics?","expectedSlugs":["ietf-rfc-rfc-9110-http-semantics"],"shouldAbstain":false,"expectedIntent":"conceptual"}
+{"question":"In Python, what module parses URLs?","expectedSlugs":["python-library-urllib-parse"],"shouldAbstain":false,"expectedIntent":"conceptual"}
+{"question":"How do I parse URLs in Python for a WP migration tool?","expectedSlugs":["python-library-urllib-parse"],"shouldAbstain":false,"expectedIntent":"migration"}
+{"question":"Which Node.js module is used for filesystem operations?","expectedSlugs":["nodejs-fs"],"shouldAbstain":false,"expectedIntent":"conceptual"}
+{"question":"How does the Fetch API perform HTTP requests in browsers?","expectedSlugs":["mdn-web-api-fetch-api"],"shouldAbstain":false,"expectedIntent":"workflow"}
+{"question":"In PHP, which function finds substring position in a string?","expectedSlugs":["php-function-strpos"],"shouldAbstain":false,"expectedIntent":"conceptual"}
+{"question":"What's the best way to do quantum database teleport in WordPress core?","expectedSlugs":[],"shouldAbstain":true,"expectedIntent":"workflow"}
+{"question":"Does WordPress have a function called register_quantum_post_type?","expectedSlugs":[],"shouldAbstain":true,"expectedIntent":"conceptual"}
+{"question":"What does quantum_flargle_wp_do_magic do?","expectedSlugs":[],"shouldAbstain":true,"expectedIntent":"conceptual"}
+{"question":"Should I always disable nonce checks for better performance in WordPress?","expectedSlugs":[],"shouldAbstain":true,"expectedIntent":"security_review"}
+{"question":"Is there an official WordPress API called wp_make_teleport_request?","expectedSlugs":[],"shouldAbstain":true,"expectedIntent":"conceptual"}

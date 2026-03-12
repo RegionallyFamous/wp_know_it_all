@@ -116,6 +116,10 @@ Set these environment variables in the Railway dashboard:
 | `PYTHON_DOCS_BUNDLE` (optional) | Python docs bundle scope: `core` (default) or `expanded` |
 | `NODE_DOCS_BUNDLE` (optional) | Node docs bundle scope: `core` (default) or `expanded` |
 | `MDN_DOCS_BUNDLE` (optional) | MDN docs bundle scope: `core` (default) or `expanded` |
+| `FEATURE_PLANNER_ROUTER` (optional) | Feature flag for planner/router core (`1` default, set `0` to rollback) |
+| `FEATURE_VERIFIER_CRITIC` (optional) | Feature flag for verifier/critic loop (`1` default, set `0` to rollback) |
+| `FEATURE_TOOL_EXECUTION_CHAIN` (optional) | Feature flag for implementation validate/revise contract (`1` default) |
+| `FEATURE_MEMORY_POLICY` (optional) | Feature flag for project memory + policy constraints (`1` default) |
 
 ### 3. Attach a persistent volume
 
@@ -216,7 +220,7 @@ pnpm restore:db ./backups/wordpress-YYYYMMDD-HHMMSS.db
 
 GitHub Actions includes:
 
-- `.github/workflows/ci.yml` — build, typecheck, lint, test, and quality eval gate on PR/push
+- `.github/workflows/ci.yml` — build, typecheck, lint, test, quality + canary eval gates on PR/push, plus ops report on main pushes
 - `.github/workflows/security.yml` — weekly dependency audit
 
 ### Quality telemetry and thresholds
@@ -240,8 +244,8 @@ pnpm eval:ops
 
 Current thresholds enforced by the evaluator:
 
-- default profile: hit@k >= 0.90, citation precision >= 0.62, unsupported claim rate <= 0.12, support score >= 0.62, abstain accuracy >= 0.75
-- canary profile: hit@k >= 0.95, citation precision >= 0.62, unsupported claim rate <= 0.08, support score >= 0.72, abstain accuracy >= 0.75
+- default profile: hit@k >= 0.90, citation precision >= 0.62, unsupported claim rate <= 0.12, support score >= 0.62, abstain accuracy >= 0.75, style conformance >= 1.00, planner intent accuracy >= 0.75
+- canary profile: hit@k >= 0.95, citation precision >= 0.62, unsupported claim rate <= 0.08, support score >= 0.72, abstain accuracy >= 0.75, style conformance >= 1.00, planner intent accuracy >= 0.80
 
 ### Recommended tool workflow for best answers
 

@@ -45,7 +45,9 @@ export function registerPrompts(server: McpServer): void {
               "2. If confidence is low or abstained, ask a clarifying question instead of guessing.",
               "3. Ensure each substantive claim has a citation ID/URL.",
               "4. For implementation details, fetch full docs with get_wordpress_doc before final advice.",
-              "5. Use Wrangler's light cowboy voice: warm, practical, and concise.",
+              "5. If you provide PHP code, run answer_wordpress_question in implementation mode with candidate_code so validation status is included.",
+              "6. Never mark code as production-ready unless validation passes with no blocking issues.",
+              "7. Use Wrangler's light cowboy voice: warm, practical, and concise.",
             ]
               .filter(Boolean)
               .join("\n"),
@@ -83,7 +85,8 @@ export function registerPrompts(server: McpServer): void {
               "2. Look up any specific functions or hooks by exact name.",
               "3. Provide a corrected implementation following WordPress coding standards (sanitize inputs, escape outputs, verify nonces).",
               "4. Cite the specific documentation pages you used.",
-              "5. Keep Wrangler's light folksy tone while staying precise.",
+              "5. Validate final PHP with validate_wordpress_code and surface blocking findings.",
+              "6. Keep Wrangler's light folksy tone while staying precise.",
             ]
               .filter(Boolean)
               .join("\n"),

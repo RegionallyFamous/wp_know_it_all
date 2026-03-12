@@ -24,13 +24,13 @@ function sourcePrior(source: SearchResult["source"]): number {
     case "wordpress-github-docs":
       return 14;
     case "wordpress-github-code":
-      return 9;
+      return 12;
     case "php-manual":
     case "nodejs-docs":
     case "mdn-webdocs":
       return 5;
     case "ietf-rfcs":
-      return 10;
+      return 4;
     case "python-docs":
       return 6;
     default:
@@ -74,6 +74,28 @@ export function rerankCandidates(
     if (intent === "workflow") {
       if (result.doc_type === "guide" || result.doc_type === "example") score += 12;
       if (result.category === "coding-standards" || result.category === "common-apis") score += 8;
+    }
+    if (intent === "debug") {
+      if (result.doc_type === "hook" || result.doc_type === "function") score += 8;
+      if (result.category === "code-reference" || result.category === "common-apis") score += 8;
+    }
+    if (intent === "implementation") {
+      if (result.doc_type === "example" || result.doc_type === "guide") score += 10;
+      if (result.category === "plugin-handbook" || result.category === "theme-handbook") score += 6;
+    }
+    if (intent === "security_review") {
+      if (result.category === "coding-standards" || result.category === "web-platform") score += 10;
+      if (result.source === "devhub-api" || result.source === "mdn-webdocs") score += 6;
+    }
+    if (intent === "migration") {
+      if (result.doc_type === "guide") score += 6;
+      if (result.source === "wordpress-github-docs" || result.source === "wordpress-github-code") {
+        score += 8;
+      }
+    }
+    if (intent === "architecture") {
+      if (result.doc_type === "guide" || result.doc_type === "class") score += 8;
+      if (result.source === "wordpress-github-docs") score += 8;
     }
 
     return { result, score };

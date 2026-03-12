@@ -21,7 +21,7 @@ export function registerValidateTool(server: McpServer): void {
         context: z
           .enum(["plugin", "theme", "block", "general"])
           .default("general")
-          .describe("The context this code runs in — affects which rules apply."),
+          .describe("The context this code runs in; used for reporting and future rule specialization."),
       },
     },
     ({ code }) => {

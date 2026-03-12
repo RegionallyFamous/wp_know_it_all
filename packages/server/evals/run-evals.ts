@@ -7,11 +7,13 @@ import { buildQueries } from "../src/db/queries.js";
 import { buildGroundedAnswer, formatGroundedAnswerOutput } from "../src/tools/answer-question.js";
 import { verifyGroundedAnswer } from "../src/lib/answer-verifier.js";
 import { hasWranglerStyle } from "../src/lib/persona.js";
+import { routeQuery } from "../src/lib/query-router.js";
 
 interface EvalCase {
   question: string;
   expectedSlugs: string[];
   shouldAbstain: boolean;
+  expectedIntent?: string;
 }
 
 interface EvalResult {
@@ -21,6 +23,8 @@ interface EvalResult {
   averageSupportScore: number;
   abstainCorrect: number;
   styleConformance: number;
+  plannerIntentCorrect: number;
+  abstained: boolean;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -37,6 +41,7 @@ const THRESHOLDS =
         averageSupportScore: 0.72,
         abstainAccuracy: 0.75,
         styleConformance: 1.0,
+        plannerIntentAccuracy: 0.8,
       }
     : {
         hitAtK: 0.9,
@@ -45,6 +50,7 @@ const THRESHOLDS =
         averageSupportScore: 0.62,
         abstainAccuracy: 0.75,
         styleConformance: 1.0,
+        plannerIntentAccuracy: 0.75,
       };
 
 function parseGoldenSet(): EvalCase[] {
@@ -300,6 +306,7 @@ async function main(): Promise<void> {
     const answerResult = await buildGroundedAnswer(queries, {
       question: testCase.question,
       top_k: TOP_K,
+      mode: "answer",
     });
     const verification = verifyGroundedAnswer(answerResult.answer, queries);
     const evidenceSlugs = new Set(answerResult.evidence.map((e) => e.slug));
@@ -323,6 +330,9 @@ async function main(): Promise<void> {
     const abstainCorrect = answerResult.answer.abstained === testCase.shouldAbstain ? 1 : 0;
     const rendered = formatGroundedAnswerOutput(answerResult.answer, verification);
     const styleConformance = hasWranglerStyle(rendered) ? 1 : 0;
+    const routedIntent = routeQuery(testCase.question).intent;
+    const plannerIntentCorrect =
+      testCase.expectedIntent == null ? 1 : routedIntent === testCase.expectedIntent ? 1 : 0;
 
     results.push({
       hitAtK,
@@ -331,16 +341,21 @@ async function main(): Promise<void> {
       averageSupportScore: verification.averageSupportScore,
       abstainCorrect,
       styleConformance,
+      plannerIntentCorrect,
+      abstained: answerResult.answer.abstained,
     });
   }
+
+  const answeredResults = results.filter((result) => !result.abstained);
 
   const metrics = {
     hitAtK: average(results.map((r) => r.hitAtK)),
     citationPrecision: average(results.map((r) => r.citationPrecision)),
-    unsupportedClaimRate: average(results.map((r) => r.unsupportedClaimRate)),
-    averageSupportScore: average(results.map((r) => r.averageSupportScore)),
+    unsupportedClaimRate: average(answeredResults.map((r) => r.unsupportedClaimRate)),
+    averageSupportScore: average(answeredResults.map((r) => r.averageSupportScore)),
     abstainAccuracy: average(results.map((r) => r.abstainCorrect)),
     styleConformance: average(results.map((r) => r.styleConformance)),
+    plannerIntentAccuracy: average(results.map((r) => r.plannerIntentCorrect)),
   };
 
   console.log("[eval] Metrics:", JSON.stringify(metrics, null, 2));
@@ -374,6 +389,11 @@ async function main(): Promise<void> {
   if (metrics.styleConformance < THRESHOLDS.styleConformance) {
     failures.push(
       `style conformance ${metrics.styleConformance.toFixed(2)} below threshold ${THRESHOLDS.styleConformance.toFixed(2)}`
+    );
+  }
+  if (metrics.plannerIntentAccuracy < THRESHOLDS.plannerIntentAccuracy) {
+    failures.push(
+      `planner intent accuracy ${metrics.plannerIntentAccuracy.toFixed(2)} below threshold ${THRESHOLDS.plannerIntentAccuracy.toFixed(2)}`
     );
   }
 
