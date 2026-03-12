@@ -296,6 +296,7 @@ function spawnEvalScript(kind: "baseline" | "ops"): void {
   });
 
   let output = "";
+  let spawnFailed = false;
   const maxOutputChars = 20_000;
   const appendChunk = (chunk: unknown): void => {
     if (output.length >= maxOutputChars) return;
@@ -326,15 +327,20 @@ function spawnEvalScript(kind: "baseline" | "ops"): void {
 
   child.on("error", (error) => {
     clearTimeout(timeout);
+    spawnFailed = true;
     state.status = "failed";
     state.completedAt = Date.now();
     state.lastMessage = `Failed to start: ${String(error)}`;
     pushAdminAction(`eval:${kind}`, "error", state.lastMessage);
   });
 
-  child.on("close", (code) => {
+  child.on("close", (code, signal) => {
     clearTimeout(timeout);
-    if (timeoutTriggered || (state.status === "failed" && state.lastMessage.includes("Timed out"))) {
+    if (
+      timeoutTriggered ||
+      spawnFailed ||
+      (state.status === "failed" && state.lastMessage.includes("Timed out"))
+    ) {
       return;
     }
     state.completedAt = Date.now();
@@ -345,7 +351,10 @@ function spawnEvalScript(kind: "baseline" | "ops"): void {
       return;
     }
     state.status = "failed";
-    state.lastMessage = output.trim().split("\n").slice(-3).join(" | ") || `Exited with code ${code}`;
+    const trailer = output.trim().split("\n").slice(-3).join(" | ");
+    const exitDetail =
+      signal != null ? `Exited via signal ${signal}` : `Exited with code ${String(code)}`;
+    state.lastMessage = trailer || exitDetail;
     pushAdminAction(`eval:${kind}`, "error", state.lastMessage);
   });
 }
