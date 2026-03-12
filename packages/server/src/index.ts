@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import express from "express";
 import type { Request, Response, RequestHandler } from "express";
+import { randomUUID } from "node:crypto";
 import { accessSync, constants as fsConstants } from "node:fs";
 import { join } from "node:path";
 import { openDatabase } from "./db/schema.js";
@@ -18,6 +19,7 @@ import { registerPrompts } from "./prompts.js";
 import { createAdminRouter } from "./admin/router.js";
 import { isAdminPasswordConfigured } from "./admin/session.js";
 import { resolveOllamaHost } from "./lib/ollama-config.js";
+import { logError, logInfo, logWarn } from "./lib/logger.js";
 
 const isProduction = process.env["NODE_ENV"] === "production";
 const mcpToken = process.env["MCP_AUTH_TOKEN"]?.trim() ?? "";
@@ -70,27 +72,27 @@ if (isProduction) {
 }
 
 if (!isMcpAuthConfigured()) {
-  console.warn("[auth] MCP_AUTH_TOKEN is not set — MCP endpoint is unauthenticated.");
+  logWarn("auth.mcp.unconfigured");
 }
 if (!isAdminPasswordConfigured()) {
-  console.warn("[admin] ADMIN_PASSWORD is not set — admin login is disabled.");
+  logWarn("admin.password.unconfigured");
 }
 const ollamaHost = resolveOllamaHost();
 if (ollamaHost) {
-  console.log(`[ollama] local inference enabled at ${ollamaHost}`);
+  logInfo("ollama.enabled", { host: ollamaHost });
 } else {
-  console.log("[ollama] disabled (set OLLAMA_ENABLED=1 to use local Ollama)");
+  logInfo("ollama.disabled");
 }
 
 // ── Database ────────────────────────────────────────────────────────────────
 const volumePath = process.env["RAILWAY_VOLUME_MOUNT_PATH"] ?? "./data";
 const dbPath = join(volumePath, "wordpress.db");
-console.log(`[db] Opening database at ${dbPath}`);
+logInfo("db.open.start", { path: dbPath });
 
 const db = openDatabase(dbPath);
 const queries = buildQueries(db);
 const stats = queries.stats();
-console.log(`[db] Ready — ${stats.total.toLocaleString()} documents indexed`);
+logInfo("db.open.ready", { documents: stats.total });
 
 function isDatabaseReady(): { ok: boolean; error?: string } {
   try {
@@ -189,6 +191,28 @@ app.use((_req, res, next) => {
   next();
 });
 
+app.use((req, res, next) => {
+  const requestId = req.get("x-request-id")?.trim() || randomUUID();
+  res.setHeader("x-request-id", requestId);
+  const startedAt = Date.now();
+  logInfo("http.request.start", {
+    requestId,
+    method: req.method,
+    path: req.path,
+    ip: getClientIp(req),
+  });
+  res.on("finish", () => {
+    logInfo("http.request.finish", {
+      requestId,
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt,
+    });
+  });
+  next();
+});
+
 app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
@@ -281,10 +305,16 @@ const mcpHandler: RequestHandler = async (req: Request, res: Response) => {
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
-
-  await server.connect(transport);
-  await transport.handleRequest(req, res, req.body as unknown);
-  console.log(`[perf] mcp request handled in ${Date.now() - startedAt}ms`);
+  try {
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body as unknown);
+    logInfo("mcp.request.handled", { durationMs: Date.now() - startedAt });
+  } catch (error) {
+    logError("mcp.request.failed", { error: String(error) });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "MCP request failed." });
+    }
+  }
 
   res.on("close", () => {
     void transport.close();
@@ -309,39 +339,42 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
   const adminStatus = process.env["ADMIN_PASSWORD"]?.trim()
     ? "password protected"
     : "DISABLED (set ADMIN_PASSWORD)";
-  console.log(`[server] WP Know It All v0.2 listening on port ${PORT}`);
-  console.log(`[server] MCP auth: ${authStatus}`);
-  console.log(`[server] Admin UI: http://0.0.0.0:${PORT}/admin (${adminStatus})`);
-  console.log(`[server] MCP endpoint: http://0.0.0.0:${PORT}/mcp`);
-  console.log(`[server] Liveness: http://0.0.0.0:${PORT}/livez`);
-  console.log(`[server] Readiness: http://0.0.0.0:${PORT}/readyz`);
-  console.log(`[server] Startup: http://0.0.0.0:${PORT}/startupz`);
-  console.log(`[server] Health check: http://0.0.0.0:${PORT}/health`);
+  logInfo("server.started", {
+    port: PORT,
+    mcpAuth: authStatus,
+    adminStatus,
+  });
   if (rateLimitEnabled) {
-    console.log(
-      `[server] Rate limits: admin-login=${adminLoginMax}/${Math.round(adminLoginWindowMs / 1000)}s, mcp=${mcpMax}/${Math.round(mcpWindowMs / 1000)}s`
-    );
+    logInfo("server.rate_limits.enabled", {
+      adminLoginMax,
+      adminLoginWindowSec: Math.round(adminLoginWindowMs / 1000),
+      mcpMax,
+      mcpWindowSec: Math.round(mcpWindowMs / 1000),
+    });
   } else {
-    console.log("[server] Rate limits: DISABLED (RATE_LIMIT_ENABLED=0)");
+    logInfo("server.rate_limits.disabled");
   }
   if (allowedHosts.length > 0) {
-    console.log(`[server] Allowed hosts: ${allowedHosts.join(", ")}`);
+    logInfo("server.allowed_hosts", { hosts: allowedHosts });
   } else {
-    console.log("[server] Allowed hosts: not set (use ALLOWED_HOSTS to restrict Host header)");
+    logWarn("server.allowed_hosts.empty");
   }
   if (ollamaHost) {
-    console.log(
-      `[server] Ollama: ${ollamaHost} (${process.env["OLLAMA_MODEL"] ?? "qwen2.5-coder:1.5b"}) local-only=${process.env["OLLAMA_LOCAL_ONLY"] !== "0"}`
-    );
+    logInfo("server.ollama.config", {
+      host: ollamaHost,
+      model: process.env["OLLAMA_MODEL"] ?? "qwen2.5-coder:1.5b",
+      localOnly: process.env["OLLAMA_LOCAL_ONLY"] !== "0",
+    });
   }
 });
 
 // ── Graceful shutdown ────────────────────────────────────────────────────────
 process.on("SIGTERM", () => {
-  console.log("[server] SIGTERM received, draining connections...");
+  logInfo("shutdown.sigterm.received");
   isShuttingDown = true;
   httpServer.close(() => {
     db.close();
+    logInfo("shutdown.http.closed");
     process.exit(0);
   });
 
@@ -351,6 +384,10 @@ process.on("SIGTERM", () => {
     if (inFlightRequests === 0 || Date.now() - started > deadlineMs) {
       clearInterval(poll);
       db.close();
+      logInfo("shutdown.forced_or_drained", {
+        drained: inFlightRequests === 0,
+        elapsedMs: Date.now() - started,
+      });
       process.exit(0);
     }
   }, 200);

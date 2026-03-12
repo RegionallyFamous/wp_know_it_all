@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { fileURLToPath } from "node:url";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import cookieParser from "cookie-parser";
@@ -33,6 +33,7 @@ import { buildQueries } from "../db/queries.js";
 import { buildGroundedAnswer } from "../tools/answer-question.js";
 import { verifyGroundedAnswer } from "../lib/answer-verifier.js";
 import { getBeyondRagFlags } from "../lib/feature-flags.js";
+import { logError, logInfo, logWarn } from "../lib/logger.js";
 
 function resolveScraperEntrypoint(): {
   entrypoint: string;
@@ -160,6 +161,7 @@ function pushAdminAction(action: string, status: AdminActionEvent["status"], det
   const boundedDetail = detail.length > 600 ? `${detail.slice(0, 600)}…` : detail;
   adminActionEvents.push({ ts: Date.now(), action, status, detail: boundedDetail });
   while (adminActionEvents.length > 200) adminActionEvents.shift();
+  logInfo("admin.action", { action, status, detail: boundedDetail });
 }
 
 function formatDurationSeconds(totalSeconds: number): string {
@@ -277,7 +279,7 @@ function readReportStatus(name: "baseline" | "ops"): ReportStatus {
   return { name, exists: false, generatedAt: null, pass: null, summary: "No report found yet." };
 }
 
-function spawnEvalScript(kind: "baseline" | "ops"): void {
+function spawnEvalScript(kind: "baseline" | "ops", fallbackRunner?: () => string): void {
   const state = evalRunStates[kind];
   if (state.status === "running") return;
   if (state.completedAt && Date.now() - state.completedAt < 10_000) {
@@ -288,6 +290,7 @@ function spawnEvalScript(kind: "baseline" | "ops"): void {
   state.startedAt = Date.now();
   state.lastMessage = `Running ${kind} report...`;
   pushAdminAction(`eval:${kind}`, "started", "Triggered from admin controls.");
+  logInfo("admin.eval.start", { kind });
 
   const script = kind === "baseline" ? "eval:baseline" : "eval:ops";
   const child = spawn("pnpm", ["--filter", "@wp-know-it-all/server", script], {
@@ -317,6 +320,7 @@ function spawnEvalScript(kind: "baseline" | "ops"): void {
     state.completedAt = Date.now();
     state.lastMessage = `Timed out after ${Math.round(timeoutMs / 1000)}s`;
     pushAdminAction(`eval:${kind}`, "error", state.lastMessage);
+    logWarn("admin.eval.timeout", { kind, timeoutMs });
   }, timeoutMs);
   child.stdout.on("data", (chunk) => {
     appendChunk(chunk);
@@ -328,10 +332,30 @@ function spawnEvalScript(kind: "baseline" | "ops"): void {
   child.on("error", (error) => {
     clearTimeout(timeout);
     spawnFailed = true;
+    const message = String(error);
+    if (fallbackRunner && message.includes("ENOENT")) {
+      logWarn("admin.eval.spawn.enoent", { kind, message });
+      try {
+        const fallbackMessage = fallbackRunner();
+        state.status = "success";
+        state.completedAt = Date.now();
+        state.lastMessage = fallbackMessage;
+        pushAdminAction(`eval:${kind}`, "ok", `Ran in-process fallback: ${fallbackMessage}`);
+        logInfo("admin.eval.fallback.success", { kind, fallbackMessage });
+      } catch (fallbackError) {
+        state.status = "failed";
+        state.completedAt = Date.now();
+        state.lastMessage = `Fallback failed: ${String(fallbackError)}`;
+        pushAdminAction(`eval:${kind}`, "error", state.lastMessage);
+        logError("admin.eval.fallback.failed", { kind, error: String(fallbackError) });
+      }
+      return;
+    }
     state.status = "failed";
     state.completedAt = Date.now();
-    state.lastMessage = `Failed to start: ${String(error)}`;
+    state.lastMessage = `Failed to start: ${message}`;
     pushAdminAction(`eval:${kind}`, "error", state.lastMessage);
+    logError("admin.eval.spawn.failed", { kind, message });
   });
 
   child.on("close", (code, signal) => {
@@ -348,6 +372,7 @@ function spawnEvalScript(kind: "baseline" | "ops"): void {
       state.status = "success";
       state.lastMessage = output.trim().split("\n").slice(-2).join(" | ") || "Completed successfully.";
       pushAdminAction(`eval:${kind}`, "ok", state.lastMessage);
+      logInfo("admin.eval.success", { kind, message: state.lastMessage });
       return;
     }
     state.status = "failed";
@@ -356,6 +381,12 @@ function spawnEvalScript(kind: "baseline" | "ops"): void {
       signal != null ? `Exited via signal ${signal}` : `Exited with code ${String(code)}`;
     state.lastMessage = trailer || exitDetail;
     pushAdminAction(`eval:${kind}`, "error", state.lastMessage);
+    logError("admin.eval.failed", {
+      kind,
+      signal,
+      code,
+      message: state.lastMessage,
+    });
   });
 }
 
@@ -1201,6 +1232,84 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
   const router = Router();
   const queries = buildAdminQueries(db);
   const searchQueries = buildQueries(db);
+  const resolveReportDir = (kind: "baseline" | "ops"): string => {
+    const envDir =
+      kind === "baseline"
+        ? process.env["BASELINE_REPORT_DIR"]?.trim()
+        : process.env["OPS_REPORT_DIR"]?.trim();
+    const dir = envDir || join(process.cwd(), "reports");
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+  const runBaselineReportInProcess = (): string => {
+    const stats = queries.getStats();
+    const analytics = queries.getJobAnalytics(50);
+    const quality = summarizeQualityEvents(readRecentQualityEvents(500));
+    const ts = new Date().toISOString();
+    const markdown = `# Wrangler Baseline Report
+
+Generated: ${ts}
+
+## Corpus Snapshot
+
+- Total documents: **${stats.totalDocs.toLocaleString()}**
+- Sources: **${stats.bySource.length}**
+- Categories: **${stats.byCategory.length}**
+
+## Scraper Reliability (Recent Sample)
+
+- Jobs sampled: **${analytics.sampledJobs}**
+- Completed: **${analytics.completedJobs}**
+- Failed: **${analytics.failedJobs}**
+- Avg docs/min: **${analytics.avgDocsPerMin.toFixed(1)}**
+
+## Quality Snapshot
+
+- Events: **${quality.totalEvents}**
+- Citation coverage: **${(quality.avgCitationCoverage * 100).toFixed(1)}%**
+- Unsupported claim rate: **${(quality.avgUnsupportedClaimRate * 100).toFixed(1)}%**
+- Support score: **${(quality.avgSupportScore * 100).toFixed(1)}%**
+- Confidence: **${(quality.avgConfidence * 100).toFixed(1)}%**
+`;
+    const path = join(resolveReportDir("baseline"), "baseline-report.md");
+    writeFileSync(path, `${markdown}\n`, "utf-8");
+    return `baseline report written: ${path}`;
+  };
+  const runOpsReportInProcess = (): string => {
+    const analytics = queries.getJobAnalytics(50);
+    const quality = summarizeQualityEvents(readRecentQualityEvents(300));
+    const sampled = Math.max(1, analytics.sampledJobs);
+    const successRate = analytics.completedJobs / sampled;
+    const failureRate = analytics.failedJobs / sampled;
+    const pass =
+      successRate >= 0.9 &&
+      failureRate <= 0.1 &&
+      quality.avgUnsupportedClaimRate <= 0.12 &&
+      quality.avgCitationCoverage >= 0.6;
+    const ts = new Date().toISOString();
+    const markdown = `# Operations SLO Report
+
+Generated: ${ts}
+
+## Scraper Reliability
+
+- Jobs sampled: **${analytics.sampledJobs}**
+- Completed: **${analytics.completedJobs}**
+- Failed: **${analytics.failedJobs}**
+- Success rate: **${(successRate * 100).toFixed(1)}%**
+
+## Answer Quality
+
+- Citation coverage: **${(quality.avgCitationCoverage * 100).toFixed(1)}%**
+- Unsupported claim rate: **${(quality.avgUnsupportedClaimRate * 100).toFixed(1)}%**
+- Support score: **${(quality.avgSupportScore * 100).toFixed(1)}%**
+
+Overall: **${pass ? "PASS" : "FAIL"}**
+`;
+    const path = join(resolveReportDir("ops"), "ops-slo-report.md");
+    writeFileSync(path, `${markdown}\n`, "utf-8");
+    return `ops report written: ${path}`;
+  };
   const searchParamsSchema = z.object({
     q: z.string().trim().max(500).optional().default(""),
     source: z
@@ -1547,7 +1656,7 @@ ${table(["Rank", "Title", "Slug", "Source", "Category", "Link"], evidenceRows)}
       res.status(400).send("Pass ?confirm=yes to run baseline report.");
       return;
     }
-    spawnEvalScript("baseline");
+    spawnEvalScript("baseline", runBaselineReportInProcess);
     res.status(204).end();
   });
 
@@ -1560,7 +1669,7 @@ ${table(["Rank", "Title", "Slug", "Source", "Category", "Link"], evidenceRows)}
       res.status(400).send("Pass ?confirm=yes to run ops report.");
       return;
     }
-    spawnEvalScript("ops");
+    spawnEvalScript("ops", runOpsReportInProcess);
     res.status(204).end();
   });
 

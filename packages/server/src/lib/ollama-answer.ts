@@ -1,5 +1,6 @@
 import type { SearchResult } from "@wp-know-it-all/shared";
 import { resolveOllamaHost } from "./ollama-config.js";
+import { logDebug, logWarn } from "./logger.js";
 
 export interface OllamaSynthResult {
   answer: string;
@@ -56,6 +57,7 @@ async function callOllamaJson(
   timeoutMs: number
 ): Promise<Record<string, unknown> | null> {
   if (!OLLAMA_HOST) return null;
+  const startedAt = Date.now();
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -72,16 +74,32 @@ async function callOllamaJson(
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      logWarn("ollama.call.non_ok_response", { model, status: res.status, timeoutMs });
+      return null;
+    }
 
     const payload = (await res.json()) as { response?: string };
     const raw = payload.response?.trim();
-    if (!raw) return null;
+    if (!raw) {
+      logWarn("ollama.call.empty_response", { model, timeoutMs });
+      return null;
+    }
     const jsonText = extractFirstJsonObject(raw);
-    if (!jsonText) return null;
+    if (!jsonText) {
+      logWarn("ollama.call.no_json_object", { model });
+      return null;
+    }
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+    logDebug("ollama.call.success", { model, durationMs: Date.now() - startedAt });
     return parsed;
-  } catch {
+  } catch (error) {
+    logWarn("ollama.call.failed", {
+      model,
+      timeoutMs,
+      durationMs: Date.now() - startedAt,
+      error: String(error),
+    });
     return null;
   }
 }
@@ -95,6 +113,7 @@ export async function synthesizeWithOllama(
   evidence: SearchResult[]
 ): Promise<OllamaSynthResult | null> {
   if (!OLLAMA_HOST) return null;
+  logDebug("ollama.synth.start", { model: OLLAMA_ANSWER_MODEL, evidenceCount: evidence.length });
 
   const evidenceBlock = evidence
     .map(
@@ -145,6 +164,7 @@ export async function synthesizeWithOllama(
     .filter((v): v is { text: string; citationDocIds: number[] } => Boolean(v));
 
   if (!abstained && (!answer || claims.length === 0)) {
+    logWarn("ollama.synth.invalid_payload", { answerLength: answer.length, claimsCount: claims.length });
     return null;
   }
 
@@ -164,6 +184,7 @@ export async function critiqueWithOllama(
   evidence: SearchResult[]
 ): Promise<OllamaCritiqueResult | null> {
   if (!OLLAMA_HOST) return null;
+  logDebug("ollama.critic.start", { model: OLLAMA_CRITIC_MODEL, claimsCount: claims.length });
 
   const evidenceBlock = evidence
     .map((item) => `DOC_ID=${item.id} TITLE=${item.title} EXCERPT=${item.excerpt}`)

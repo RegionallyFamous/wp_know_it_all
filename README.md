@@ -122,6 +122,9 @@ Set these environment variables in the Railway dashboard:
 | `FEATURE_VERIFIER_CRITIC` (optional) | Feature flag for verifier/critic loop (`1` default, set `0` to rollback) |
 | `FEATURE_TOOL_EXECUTION_CHAIN` (optional) | Feature flag for implementation validate/revise contract (`1` default) |
 | `FEATURE_MEMORY_POLICY` (optional) | Feature flag for project memory + policy constraints (`1` default) |
+| `LOG_LEVEL` (optional) | Log level threshold: `debug`, `info` (default), `warn`, `error` |
+| `LOG_FILE_ENABLED` (optional) | Set `1` to persist structured logs to disk as JSONL |
+| `LOG_EVENTS_PATH` (optional) | Override JSONL log file path (default `${RAILWAY_VOLUME_MOUNT_PATH}/server-events.jsonl`) |
 
 ### 3. Attach a persistent volume
 

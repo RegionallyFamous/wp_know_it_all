@@ -12,6 +12,7 @@ import { logQualityEvent } from "../lib/quality-metrics.js";
 import { applyWranglerPersona } from "../lib/persona.js";
 import { getBeyondRagFlags } from "../lib/feature-flags.js";
 import { buildProjectMemoryStore } from "../lib/project-memory.js";
+import { logDebug, logInfo, logWarn } from "../lib/logger.js";
 import { validateWordPressCode } from "../validation/engine.js";
 import {
   critiqueWithOllama,
@@ -462,6 +463,13 @@ export async function buildGroundedAnswer(
   const flags = getBeyondRagFlags();
   const startedAt = Date.now();
   const route = routeQuery(params.question);
+  logInfo("answer_pipeline.start", {
+    mode: params.mode,
+    category: params.category,
+    docType: params.doc_type,
+    topK: params.top_k,
+    routeIntent: route.intent,
+  });
   const candidates: RetrievalCandidate[] = [];
   let hasExactMatch = false;
   const pushCandidates = (results: SearchResult[], source: RetrievalCandidate["source"]): void => {
@@ -530,6 +538,11 @@ export async function buildGroundedAnswer(
   const answerStart = Date.now();
 
   if (evidence.length === 0) {
+    logWarn("answer_pipeline.abstain.no_evidence", {
+      routeIntent: route.intent,
+      retrievalLatencyMs,
+      rerankLatencyMs,
+    });
     return {
       answer: buildAbstainedAnswer(params.question, "No relevant evidence documents were retrieved."),
       evidence,
@@ -545,6 +558,10 @@ export async function buildGroundedAnswer(
   if (route.intent !== "exact_symbol") {
     const keywordCoverage = evidenceKeywordCoverage(params.question, evidence);
     if (keywordCoverage < 0.25) {
+      logWarn("answer_pipeline.abstain.low_keyword_coverage", {
+        routeIntent: route.intent,
+        keywordCoverage,
+      });
       return {
         answer: buildAbstainedAnswer(
           params.question,
@@ -569,6 +586,9 @@ export async function buildGroundedAnswer(
       (item) => item.title.toLowerCase() === route.normalizedQuery.toLowerCase()
     );
     if (!exactSlugMatch && !exactTitleMatch) {
+      logWarn("answer_pipeline.abstain.exact_symbol_not_found", {
+        symbol: route.normalizedQuery,
+      });
       return {
         answer: buildAbstainedAnswer(
           params.question,
@@ -600,6 +620,9 @@ export async function buildGroundedAnswer(
   const evidenceById = buildEvidenceMap(evidence);
 
   if (flags.verifierCritic && isOllamaAnsweringEnabled()) {
+    logDebug("answer_pipeline.ollama_synthesis.attempt", {
+      evidenceCount: evidence.length,
+    });
     const ollamaSynth = await synthesizeWithOllama(params.question, evidence);
     if (ollamaSynth) {
       const citations = buildCitationsFromEvidence(evidence);
@@ -643,6 +666,7 @@ export async function buildGroundedAnswer(
       if (critique) {
         criticUsed = true;
         criticAccepted = critique.accept;
+        logDebug("answer_pipeline.ollama_critic.result", { accepted: critique.accept });
         if (!critique.accept && !answer.abstained) {
           answer = buildAbstainedAnswer(
             params.question,
@@ -653,6 +677,17 @@ export async function buildGroundedAnswer(
     }
   }
 
+  const answerLatencyMs = Date.now() - answerStart;
+  logInfo("answer_pipeline.retrieval_complete", {
+    routeIntent: route.intent,
+    evidenceCount: evidence.length,
+    synthesisEngine,
+    criticUsed,
+    criticAccepted,
+    retrievalLatencyMs,
+    rerankLatencyMs,
+    answerLatencyMs,
+  });
   return {
     answer,
     evidence,
@@ -662,7 +697,7 @@ export async function buildGroundedAnswer(
     routeIntent: route.intent,
     retrievalLatencyMs,
     rerankLatencyMs,
-    answerLatencyMs: Date.now() - answerStart,
+    answerLatencyMs,
   };
 }
 
@@ -810,6 +845,12 @@ export function registerAnswerQuestionTool(
         mode,
       });
       const initialVerification = verifyGroundedAnswer(result.answer, queries);
+      logInfo("answer_pipeline.verification.initial", {
+        ok: initialVerification.ok,
+        citationCoverage: initialVerification.citationCoverage,
+        unsupportedClaimRate: initialVerification.unsupportedClaimRate,
+        reasons: initialVerification.reasons,
+      });
 
       const finalAnswerBase =
         !flags.verifierCritic || initialVerification.ok || result.answer.abstained
@@ -842,6 +883,13 @@ export function registerAnswerQuestionTool(
       const validationResult = shouldRunValidation
         ? validateWordPressCode(normalizedCandidateCode!)
         : undefined;
+      if (shouldRunValidation) {
+        logInfo("answer_pipeline.validation.executed", {
+          passed: validationResult?.passed ?? false,
+          score: validationResult?.score,
+          issueCount: validationResult?.issues.length ?? 0,
+        });
+      }
       const blockingIssueCount = validationResult
         ? validationResult.issues.filter((issue) => issue.severity === "error").length
         : 0;
@@ -877,6 +925,12 @@ export function registerAnswerQuestionTool(
       }
 
       const policyViolated = policyReasons.length > 0;
+      if (policyViolated) {
+        logWarn("answer_pipeline.policy.violated", {
+          riskProfile: effectiveRiskProfile,
+          reasons: policyReasons,
+        });
+      }
       const needsForcedAbstain =
         policyReasons.some((reason) => reason.toLowerCase().includes("forced abstention")) ||
         (mode === "implementation" && shouldRunValidation && !validationResult?.passed);
@@ -926,6 +980,20 @@ export function registerAnswerQuestionTool(
             }
           : answerWithContractsBase;
       const finalVerification = verifyGroundedAnswer(answerWithContracts, queries);
+      logInfo("answer_pipeline.complete", {
+        routeIntent: result.routeIntent,
+        synthesisEngine: result.synthesisEngine,
+        criticUsed: result.criticUsed,
+        criticAccepted: result.criticAccepted,
+        evidenceCount: result.evidence.length,
+        abstained: answerWithContracts.abstained,
+        confidence: answerWithContracts.confidence,
+        retrievalLatencyMs: result.retrievalLatencyMs,
+        rerankLatencyMs: result.rerankLatencyMs,
+        answerLatencyMs: result.answerLatencyMs,
+        citationCoverage: finalVerification.citationCoverage,
+        unsupportedClaimRate: finalVerification.unsupportedClaimRate,
+      });
 
       logQualityEvent({
         tool: "answer_wordpress_question",

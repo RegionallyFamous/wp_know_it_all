@@ -10,6 +10,7 @@
  */
 
 import { resolveOllamaHost } from "./ollama-config.js";
+import { logDebug, logWarn } from "./logger.js";
 
 const OLLAMA_HOST = resolveOllamaHost();
 const OLLAMA_MODEL = process.env["OLLAMA_MODEL"] ?? "qwen2.5-coder:1.5b";
@@ -33,6 +34,7 @@ export async function expandQuery(query: string): Promise<string> {
   const now = Date.now();
   const cached = expansionCache.get(query);
   if (cached && cached.expiresAt > now) {
+    logDebug("query_expansion.cache.hit", { queryLength: query.length });
     return cached.value;
   }
 
@@ -58,7 +60,10 @@ export async function expandQuery(query: string): Promise<string> {
 
     clearTimeout(timeout);
 
-    if (!res.ok) return query;
+    if (!res.ok) {
+      logWarn("query_expansion.non_ok_response", { status: res.status });
+      return query;
+    }
 
     const data = (await res.json()) as { response?: string };
     const expansion = data.response?.trim();
@@ -73,9 +78,14 @@ export async function expandQuery(query: string): Promise<string> {
       if (firstKey) expansionCache.delete(firstKey);
     }
     expansionCache.set(query, { value: combined, expiresAt: now + CACHE_TTL_MS });
+    logDebug("query_expansion.success", {
+      queryLength: query.length,
+      termCount: terms.length,
+      combinedLength: combined.length,
+    });
     return combined;
-  } catch {
-    // Silently fall back — Ollama is optional
+  } catch (error) {
+    logWarn("query_expansion.failed", { error: String(error) });
     return query;
   }
 }
