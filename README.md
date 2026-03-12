@@ -101,7 +101,9 @@ Set these environment variables in the Railway dashboard:
 | `ADMIN_PASSWORD` | Required in production to enable admin sign-in |
 | `ALLOWED_HOSTS` | Comma-separated host allowlist for DNS-rebinding protection (e.g. `your-service.up.railway.app`) |
 | `SCRAPER_ENTRY` (optional) | Absolute path to scraper entrypoint. Default auto-resolves to `/app/packages/scraper/dist/index.js` |
-| `OLLAMA_HOST` (optional) | Ollama endpoint used for query expansion and answer synthesis |
+| `OLLAMA_HOST` (optional) | Ollama endpoint. Defaults to `http://127.0.0.1:11434` for local inference |
+| `OLLAMA_ENABLED` (optional) | Set `0` to disable Ollama integration entirely |
+| `OLLAMA_LOCAL_ONLY` (optional) | Defaults to `1`; blocks non-local Ollama hosts to avoid cloud inference |
 | `OLLAMA_MODEL` (optional) | Default Ollama model; used for query expansion unless overridden |
 | `OLLAMA_EXPAND_TIMEOUT_MS` (optional) | Ollama query-expansion time budget in ms (default `250`) |
 | `GITHUB_TIER` (optional) | Curated WordPress GitHub tier for scraper (`tier1` default, `tier2` opt-in) |
@@ -174,6 +176,7 @@ The admin now includes focused operational surfaces:
 - `/admin/health` — stage-by-stage pipeline health (ingest, growth, quality, ops gate).
 - `/admin/jobs` — job analytics, throughput, failure sources, and per-job detail views.
 - `/admin/retrieval` — retrieval diagnostics for intent/evidence/citation inspection.
+- `/admin/assistant` — ask Wrangler directly from admin (uses Ollama synthesis when configured).
 - `/admin/evals` — baseline/ops report status with one-click report triggers.
 - `/admin/controls` — centralized high-impact controls with feature-flag visibility and action log.
 

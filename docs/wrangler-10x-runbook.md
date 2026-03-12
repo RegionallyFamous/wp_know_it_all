@@ -15,6 +15,7 @@ Operational runbook for keeping Wrangler reliable while refining retrieval quali
    - `pnpm eval:ops`
 4. Review admin dashboard:
    - `Health` page for ingest/growth/quality/ops stage checks.
+   - `Wrangler AI` page to ask focused improvement questions and inspect grounded answers.
    - `Jobs` page for throughput, failures, and job-level diagnostics.
    - `Retrieval` diagnostics for intent/evidence spot checks.
    - `Eval/Ops` page for report status and rerun actions.

@@ -9,7 +9,9 @@
  * takes longer than 3 seconds — so this is always safe to use.
  */
 
-const OLLAMA_HOST = process.env["OLLAMA_HOST"];
+import { resolveOllamaHost } from "./ollama-config.js";
+
+const OLLAMA_HOST = resolveOllamaHost();
 const OLLAMA_MODEL = process.env["OLLAMA_MODEL"] ?? "qwen2.5-coder:1.5b";
 const EXPAND_TIMEOUT_MS = parseInt(process.env["OLLAMA_EXPAND_TIMEOUT_MS"] ?? "250", 10);
 const CACHE_TTL_MS = 5 * 60 * 1000;

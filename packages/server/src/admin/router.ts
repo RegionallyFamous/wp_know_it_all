@@ -129,7 +129,17 @@ interface ReportStatus {
   summary: string;
 }
 
+interface AdminAssistantTurn {
+  ts: number;
+  question: string;
+  answer: string;
+  synthesisEngine: "deterministic" | "ollama";
+  confidence: number;
+  abstained: boolean;
+}
+
 const adminActionEvents: AdminActionEvent[] = [];
+const adminAssistantTurns: AdminAssistantTurn[] = [];
 const evalRunStates: Record<"baseline" | "ops", EvalRunState> = {
   baseline: { status: "idle", startedAt: null, completedAt: null, lastMessage: "Not run from admin yet." },
   ops: { status: "idle", startedAt: null, completedAt: null, lastMessage: "Not run from admin yet." },
@@ -230,6 +240,10 @@ function renderStageStatus(label: string, status: "green" | "amber" | "red", det
   <div class="flex items-center gap-2 text-sm font-semibold"><span class="w-2 h-2 rounded-full ${dot}"></span>${escapeHtml(label)}</div>
   <p class="text-xs mt-2 opacity-90">${escapeHtml(detail)}</p>
 </div>`;
+}
+
+function formatMultilineText(input: string): string {
+  return escapeHtml(input).replace(/\n/g, "<br>");
 }
 
 function readReportStatus(name: "baseline" | "ops"): ReportStatus {
@@ -1056,6 +1070,41 @@ function renderEvalsPageShell(): string {
 </div>`;
 }
 
+function renderAssistantPage(): string {
+  const historyRows = adminAssistantTurns
+    .slice(-10)
+    .reverse()
+    .map((turn) => [
+      new Date(turn.ts).toLocaleString(),
+      `<span class="text-xs text-slate-200">${escapeHtml(turn.question)}</span>`,
+      turn.synthesisEngine === "ollama"
+        ? `<span class="text-emerald-300">ollama</span>`
+        : `<span class="text-amber-300">deterministic</span>`,
+      `${Math.round(turn.confidence * 100)}%`,
+      turn.abstained ? `<span class="text-amber-300">yes</span>` : "no",
+    ]);
+  return `
+<div class="mb-8">
+  <h1 class="text-2xl font-bold text-slate-100">Wrangler AI</h1>
+  <p class="text-sm text-slate-500 mt-1">Ask grounded questions and inspect how Wrangler answers using Ollama-enhanced synthesis when available.</p>
+</div>
+<div class="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+  <form hx-post="/admin/assistant/ask" hx-target="#assistant-output" hx-swap="innerHTML" class="grid grid-cols-1 lg:grid-cols-8 gap-3">
+    <input name="question" type="text" required placeholder="Ask Wrangler how to improve WordPress implementation quality..." class="lg:col-span-4 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-slate-100" />
+    <input name="category" type="text" placeholder="category (optional)" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100" />
+    <input name="doc_type" type="text" placeholder="doc_type (optional)" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100" />
+    <input name="top_k" type="number" min="3" max="12" value="6" class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100" />
+    <button type="submit" class="bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium px-5 py-2.5 rounded-lg">Ask Wrangler</button>
+  </form>
+</div>
+<div id="assistant-output" class="bg-slate-900 border border-slate-800 rounded-xl p-6 text-slate-500 text-sm mb-6">
+  Ask a question to run the Wrangler answer pipeline from admin.
+</div>
+<h2 class="text-sm font-semibold text-slate-300 mb-3">Recent Questions</h2>
+${table(["Timestamp", "Question", "Engine", "Confidence", "Abstained"], historyRows)}
+`;
+}
+
 function renderEvalsFragment(baseline: ReportStatus, ops: ReportStatus): string {
   const runRows = (["baseline", "ops"] as const).map((kind) => {
     const state = evalRunStates[kind];
@@ -1186,6 +1235,12 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
     doc_type: z.string().trim().optional(),
     top_k: z.coerce.number().int().min(3).max(12).default(6),
   });
+  const assistantParamsSchema = z.object({
+    question: z.string().trim().min(3).max(1500),
+    category: z.string().trim().optional(),
+    doc_type: z.string().trim().optional(),
+    top_k: z.coerce.number().int().min(3).max(12).default(6),
+  });
 
   // Cookie parser (scoped to admin router)
   router.use(cookieParser());
@@ -1302,6 +1357,91 @@ export function createAdminRouter(db: Database.Database): ReturnType<typeof Rout
 
   router.get("/retrieval", (_req: Request, res: Response) => {
     res.send(page("Retrieval", renderRetrievalPage(), "retrieval"));
+  });
+
+  router.get("/assistant", (_req: Request, res: Response) => {
+    res.send(page("Wrangler AI", renderAssistantPage(), "assistant"));
+  });
+
+  router.post("/assistant/ask", async (req: Request, res: Response) => {
+    if (retrievalDiagnosticsInFlight >= Math.max(1, retrievalDiagnosticsMaxInFlight)) {
+      res
+        .status(429)
+        .send(`<div class="text-amber-300 text-sm">Wrangler is busy right now. Try again in a moment.</div>`);
+      return;
+    }
+    const body = req.body as Record<string, unknown> | undefined;
+    const parsed = assistantParamsSchema.safeParse({
+      question: body?.["question"],
+      category: body?.["category"],
+      doc_type: body?.["doc_type"],
+      top_k: body?.["top_k"],
+    });
+    if (!parsed.success) {
+      res.status(400).send(`<div class="text-rose-300 text-sm">Invalid assistant input.</div>`);
+      return;
+    }
+
+    const timeoutMs = (() => {
+      const parsedTimeout = Number.parseInt(process.env["ADMIN_ASSISTANT_TIMEOUT_MS"] ?? "16000", 10);
+      return Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 16_000;
+    })();
+    const { question, category, doc_type, top_k } = parsed.data;
+    retrievalDiagnosticsInFlight += 1;
+    try {
+      const result = await withTimeout(
+        buildGroundedAnswer(searchQueries, {
+          question,
+          category: category || undefined,
+          doc_type: doc_type || undefined,
+          top_k,
+          mode: "answer",
+        }),
+        timeoutMs,
+        "assistant answer"
+      );
+      const verification = verifyGroundedAnswer(result.answer, searchQueries);
+      adminAssistantTurns.push({
+        ts: Date.now(),
+        question,
+        answer: result.answer.answer,
+        synthesisEngine: result.synthesisEngine,
+        confidence: result.answer.confidence,
+        abstained: result.answer.abstained,
+      });
+      while (adminAssistantTurns.length > 100) adminAssistantTurns.shift();
+
+      const citationRows = result.answer.citations.slice(0, 8).map((citation) => [
+        `${citation.docId}`,
+        escapeHtml(citation.title),
+        `<span class="font-mono text-xs text-slate-400">${escapeHtml(citation.slug)}</span>`,
+        (() => {
+          const safeUrl = safeExternalHref(citation.url);
+          return safeUrl
+            ? `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noreferrer" class="text-sky-400 hover:text-sky-300 text-xs">open</a>`
+            : `<span class="text-slate-600">invalid-url</span>`;
+        })(),
+      ]);
+
+      res.send(`
+<div class="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-4">
+  ${statCard("Engine", result.synthesisEngine, result.synthesisEngine === "ollama" ? "emerald" : "amber")}
+  ${statCard("Confidence", `${Math.round(result.answer.confidence * 100)}%`, "sky")}
+  ${statCard("Abstained", result.answer.abstained ? "yes" : "no", result.answer.abstained ? "amber" : "emerald")}
+  ${statCard("Citation", `${Math.round(verification.citationCoverage * 100)}%`, "violet")}
+  ${statCard("Unsupported", `${Math.round(verification.unsupportedClaimRate * 100)}%`, verification.unsupportedClaimRate > 0 ? "rose" : "emerald")}
+  ${statCard("Latency", `${result.answerLatencyMs}ms`, "slate")}
+</div>
+<div class="bg-slate-950/50 border border-slate-800 rounded-lg p-4 mb-4 text-sm text-slate-200 leading-relaxed">${formatMultilineText(result.answer.answer)}</div>
+<div class="text-xs text-slate-500 mb-4">Retrieval ${result.retrievalLatencyMs}ms | Rerank ${result.rerankLatencyMs}ms | Answer ${result.answerLatencyMs}ms</div>
+<h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Top Citations</h3>
+${table(["ID", "Title", "Slug", "Link"], citationRows)}
+`);
+    } catch (error) {
+      res.status(500).send(`<div class="text-rose-300 text-sm">Assistant failed: ${escapeHtml(String(error))}</div>`);
+    } finally {
+      retrievalDiagnosticsInFlight = Math.max(0, retrievalDiagnosticsInFlight - 1);
+    }
   });
 
   router.post("/retrieval/run", async (req: Request, res: Response) => {

@@ -17,6 +17,7 @@ import { registerResources } from "./resources.js";
 import { registerPrompts } from "./prompts.js";
 import { createAdminRouter } from "./admin/router.js";
 import { isAdminPasswordConfigured } from "./admin/session.js";
+import { resolveOllamaHost } from "./lib/ollama-config.js";
 
 const isProduction = process.env["NODE_ENV"] === "production";
 const mcpToken = process.env["MCP_AUTH_TOKEN"]?.trim() ?? "";
@@ -73,6 +74,12 @@ if (!isMcpAuthConfigured()) {
 }
 if (!isAdminPasswordConfigured()) {
   console.warn("[admin] ADMIN_PASSWORD is not set — admin login is disabled.");
+}
+const ollamaHost = resolveOllamaHost();
+if (ollamaHost) {
+  console.log(`[ollama] local inference enabled at ${ollamaHost}`);
+} else {
+  console.log("[ollama] disabled (set OLLAMA_ENABLED=1 to use local Ollama)");
 }
 
 // ── Database ────────────────────────────────────────────────────────────────
@@ -322,9 +329,9 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
   } else {
     console.log("[server] Allowed hosts: not set (use ALLOWED_HOSTS to restrict Host header)");
   }
-  if (process.env["OLLAMA_HOST"]) {
+  if (ollamaHost) {
     console.log(
-      `[server] Ollama: ${process.env["OLLAMA_HOST"]} (${process.env["OLLAMA_MODEL"] ?? "qwen2.5-coder:1.5b"})`
+      `[server] Ollama: ${ollamaHost} (${process.env["OLLAMA_MODEL"] ?? "qwen2.5-coder:1.5b"}) local-only=${process.env["OLLAMA_LOCAL_ONLY"] !== "0"}`
     );
   }
 });

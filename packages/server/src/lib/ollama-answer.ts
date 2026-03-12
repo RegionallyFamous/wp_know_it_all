@@ -1,4 +1,5 @@
 import type { SearchResult } from "@wp-know-it-all/shared";
+import { resolveOllamaHost } from "./ollama-config.js";
 
 export interface OllamaSynthResult {
   answer: string;
@@ -13,7 +14,7 @@ export interface OllamaCritiqueResult {
   reason?: string;
 }
 
-const OLLAMA_HOST = process.env["OLLAMA_HOST"]?.trim();
+const OLLAMA_HOST = resolveOllamaHost();
 const OLLAMA_ANSWER_MODEL =
   process.env["OLLAMA_ANSWER_MODEL"]?.trim() ||
   process.env["OLLAMA_MODEL"]?.trim() ||

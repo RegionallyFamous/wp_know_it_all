@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: "/admin/health", label: "Health", key: "health" },
   { href: "/admin/jobs", label: "Jobs", key: "jobs" },
   { href: "/admin/retrieval", label: "Retrieval", key: "retrieval" },
+  { href: "/admin/assistant", label: "Wrangler AI", key: "assistant" },
   { href: "/admin/evals", label: "Eval/Ops", key: "evals" },
   { href: "/admin/controls", label: "Controls", key: "controls" },
   { href: "/admin/search", label: "Search", key: "search" },
